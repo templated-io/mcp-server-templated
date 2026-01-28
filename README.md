@@ -1,6 +1,6 @@
 # Templated MCP Server
 
-MCP (Model Context Protocol) server for [Templated.io](https://templated.io) - the API for automated image, video, and PDF generation.
+MCP (Model Context Protocol) server for [Templated](https://templated.io) - the API for automated image, video, and PDF generation.
 
 This server enables AI assistants like Claude to interact with your Templated account to generate images, videos, and PDFs from templates.
 
@@ -30,7 +30,7 @@ npm install -g mcp-server-templated
 
 ### Get Your API Key
 
-1. Sign up at [templated.io](https://templated.io)
+1. Sign up at [app.templated.io](https://app.templated.io)
 2. Go to your [API Key page](https://app.templated.io/api-key)
 3. Copy your API key
 
@@ -38,7 +38,7 @@ npm install -g mcp-server-templated
 
 Add to your Claude Desktop configuration file:
 
-**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`\
 **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
