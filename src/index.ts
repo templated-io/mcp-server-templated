@@ -913,6 +913,10 @@ async function startHttpMode(port: number) {
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Mcp-Session-Id");
     res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
+    
+    // Content Security Policy - required for ChatGPT app submission
+    // Specifies that this server only fetches from api.templated.io
+    res.setHeader("Content-Security-Policy", "default-src 'self'; connect-src 'self' https://api.templated.io");
 
     if (req.method === "OPTIONS") {
       res.writeHead(200);
