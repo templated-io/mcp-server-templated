@@ -2,7 +2,7 @@
 
 MCP (Model Context Protocol) server for [Templated](https://templated.io) - the API for automated image, video, and PDF generation.
 
-This server enables AI assistants like Claude and Cursor to interact with your Templated account - generate renders, manage templates, upload assets, and access all API features using natural language.
+This server enables AI assistants like Claude, Cursor, and ChatGPT to interact with your Templated account - generate renders, manage templates, upload assets, and access all API features using natural language.
 
 ## Features
 
@@ -41,6 +41,13 @@ Add to `~/.cursor/mcp.json`:
   }
 }
 ```
+
+#### ChatGPT
+
+1. Go to **Settings → Connected Apps → Add MCP Server**
+2. Enter URL: `https://mcp.templated.io/mcp?apiKey=your-api-key-here`
+3. Set Authentication to **No Auth**
+4. Click Create
 
 ### Option 2: Local Server
 
