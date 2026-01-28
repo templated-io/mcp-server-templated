@@ -286,7 +286,7 @@ const tools: Tool[] = [
   },
   {
     name: "create_template",
-    description: "Create a new template programmatically",
+    description: "Create a new template programmatically with layers. IMPORTANT: Each layer must have a 'layer' field (unique identifier/name), not 'name'. Valid layer types are: 'text', 'image', 'shape', 'rating'. Use 'shape' for rectangles, circles, and other shapes - shapes require an 'html' field with SVG content.",
     inputSchema: {
       type: "object",
       properties: {
@@ -302,9 +302,58 @@ const tools: Tool[] = [
           type: "number",
           description: "Template height in pixels",
         },
+        background: {
+          type: "string",
+          description: "Template background color (e.g., '#ffffff', 'rgb(255,255,255)', 'transparent')",
+        },
         layers: {
           type: "array",
-          description: "Array of layer objects defining the template structure",
+          description: "Array of layer objects. Each layer MUST have 'layer' (unique name) and 'type' fields.",
+          items: {
+            type: "object",
+            properties: {
+              layer: {
+                type: "string",
+                description: "REQUIRED: Unique layer identifier/name (e.g., 'title', 'background', 'photo'). This is NOT 'name', use 'layer'!",
+              },
+              type: {
+                type: "string",
+                enum: ["text", "image", "shape", "rating"],
+                description: "REQUIRED: Layer type. Use 'shape' for rectangles/circles (NOT 'rectangle'). Shapes need 'html' with SVG content.",
+              },
+              x: { type: "number", description: "X position in pixels" },
+              y: { type: "number", description: "Y position in pixels" },
+              width: { type: "number", description: "Width in pixels" },
+              height: { type: "number", description: "Height in pixels" },
+              rotation: { type: "number", description: "Rotation in degrees" },
+              // Text layer properties
+              text: { type: "string", description: "Text content (for text layers)" },
+              color: { type: "string", description: "Text color (e.g., '#000000', 'rgba(0,0,0,1)')" },
+              font_family: { type: "string", description: "Font family (e.g., 'Inter', 'Arial')" },
+              font_size: { type: "string", description: "Font size with unit (e.g., '24px', '2em')" },
+              font_weight: { type: "string", description: "Font weight (e.g., 'normal', 'bold', '600')" },
+              letter_spacing: { type: "string", description: "Letter spacing (e.g., '1px', '0.05em')" },
+              line_height: { type: "string", description: "Line height (e.g., '1.4', '24px')" },
+              horizontal_align: { type: "string", enum: ["left", "center", "right"], description: "Horizontal text alignment" },
+              vertical_align: { type: "string", enum: ["top", "center", "bottom"], description: "Vertical text alignment" },
+              // Image layer properties
+              image_url: { type: "string", description: "Image URL (for image layers)" },
+              object_fit: { type: "string", enum: ["cover", "contain", "fill"], description: "How image fits in container" },
+              // Shape layer properties
+              html: { type: "string", description: "SVG content for shape layers. Example: '<rect width=\"100%\" height=\"100%\" fill=\"#ff0000\"/>'" },
+              fill: { type: "string", description: "SVG fill color" },
+              stroke: { type: "string", description: "SVG stroke color" },
+              // Common styling
+              background: { type: "string", description: "Background color/gradient (for shapes use this OR html with SVG)" },
+              border_width: { type: "number", description: "Border width in pixels" },
+              border_color: { type: "string", description: "Border color" },
+              border_radius: { type: "string", description: "Border radius (e.g., '8px', '50%')" },
+              opacity: { type: "number", description: "Opacity from 0 to 1" },
+              hide: { type: "boolean", description: "Whether layer is hidden" },
+              order: { type: "number", description: "Layer stacking order (lower = behind)" },
+            },
+            required: ["layer", "type"],
+          },
         },
       },
       required: ["name", "width", "height"],
@@ -312,7 +361,7 @@ const tools: Tool[] = [
   },
   {
     name: "update_template",
-    description: "Update an existing template",
+    description: "Update an existing template. IMPORTANT: Each layer must have a 'layer' field (unique identifier), not 'name'. Valid types: 'text', 'image', 'shape', 'rating'.",
     inputSchema: {
       type: "object",
       properties: {
@@ -336,9 +385,27 @@ const tools: Tool[] = [
           type: "number",
           description: "New height in pixels",
         },
+        background: {
+          type: "string",
+          description: "Template background color",
+        },
         layers: {
           type: "array",
-          description: "Updated layer definitions",
+          description: "Layer definitions. Each must have 'layer' (unique name) and 'type' (text/image/shape/rating).",
+          items: {
+            type: "object",
+            properties: {
+              layer: { type: "string", description: "REQUIRED: Unique layer identifier (NOT 'name')" },
+              type: { type: "string", enum: ["text", "image", "shape", "rating"], description: "Layer type" },
+              x: { type: "number" }, y: { type: "number" },
+              width: { type: "number" }, height: { type: "number" },
+              text: { type: "string" }, color: { type: "string" },
+              font_family: { type: "string" }, font_size: { type: "string" },
+              image_url: { type: "string" }, background: { type: "string" },
+              html: { type: "string", description: "SVG content for shape layers" },
+            },
+            required: ["layer", "type"],
+          },
         },
         replaceLayers: {
           type: "boolean",
