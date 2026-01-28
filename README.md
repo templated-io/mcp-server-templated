@@ -2,7 +2,7 @@
 
 MCP (Model Context Protocol) server for [Templated](https://templated.io) - the API for automated image, video, and PDF generation.
 
-This server enables AI assistants like Claude to interact with your Templated account to generate images, videos, and PDFs from templates.
+This server enables AI assistants like Claude, Cursor, and ChatGPT to interact with your Templated account to generate images, videos, and PDFs from templates.
 
 ## Features
 
@@ -12,21 +12,7 @@ This server enables AI assistants like Claude to interact with your Templated ac
 - **Asset Management**: Upload and manage images, videos, and custom fonts
 - **Folder Organization**: Create and manage folders for templates
 
-## Installation
-
-### Using npx (Recommended)
-
-```bash
-npx mcp-server-templated
-```
-
-### Using npm
-
-```bash
-npm install -g mcp-server-templated
-```
-
-## Configuration
+## Quick Start
 
 ### Get Your API Key
 
@@ -34,11 +20,43 @@ npm install -g mcp-server-templated
 2. Go to your [API Key page](https://app.templated.io/api-key)
 3. Copy your API key
 
-### Claude Desktop
+## Connection Options
 
-Add to your Claude Desktop configuration file:
+### Option 1: Remote Server (Recommended)
 
-**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`\
+Use our hosted MCP server - no installation required, always up-to-date.
+
+**Endpoint:** `https://mcp.templated.io/mcp?apiKey=YOUR_API_KEY`
+
+#### Cursor IDE
+
+Add to `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "templated": {
+      "url": "https://mcp.templated.io/mcp?apiKey=your-api-key-here"
+    }
+  }
+}
+```
+
+#### ChatGPT
+
+1. Go to **Settings → Connected Apps → Add MCP Server**
+2. Enter URL: `https://mcp.templated.io/mcp`
+3. Enter your API key when prompted
+
+### Option 2: Local Server
+
+Run the MCP server locally on your machine. Requires Node.js 18+.
+
+#### Claude Desktop
+
+Claude Desktop requires running the server locally. Add to your config file:
+
+**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`  
 **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
@@ -55,9 +73,9 @@ Add to your Claude Desktop configuration file:
 }
 ```
 
-### Cursor IDE
+#### Cursor IDE (Local)
 
-Add to your Cursor MCP settings:
+Add to `~/.cursor/mcp.json`:
 
 ```json
 {
@@ -71,6 +89,16 @@ Add to your Cursor MCP settings:
     }
   }
 }
+```
+
+#### Manual Installation
+
+```bash
+# Using npx (no install needed)
+npx mcp-server-templated
+
+# Or install globally
+npm install -g mcp-server-templated
 ```
 
 ## Available Tools
@@ -170,8 +198,18 @@ npm install
 # Build
 npm run build
 
-# Run locally
+# Run in stdio mode (for local MCP clients)
 TEMPLATED_API_KEY=your-key node dist/index.js
+
+# Run in HTTP mode (for remote access)
+PORT=3456 node dist/index.js
+# Then access: http://localhost:3456/mcp?apiKey=your-key
+```
+
+### Testing with MCP Inspector
+
+```bash
+npx @modelcontextprotocol/inspector npx mcp-server-templated
 ```
 
 ## Resources
