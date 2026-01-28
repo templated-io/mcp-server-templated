@@ -2,22 +2,36 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   Tool,
 } from "@modelcontextprotocol/sdk/types.js";
+import http from "http";
 
 // API Configuration
 const API_BASE_URL = "https://api.templated.io";
 
-// Get API key from environment
+// Store for active SSE connections (sessionId -> { transport, apiKey })
+const sessions = new Map<string, { transport: SSEServerTransport; apiKey: string }>();
+
+// Get API key - either from environment (stdio mode) or from request (SSE mode)
+let currentApiKey: string | null = null;
+
 function getApiKey(): string {
+  if (currentApiKey) {
+    return currentApiKey;
+  }
   const apiKey = process.env.TEMPLATED_API_KEY;
   if (!apiKey) {
     throw new Error("TEMPLATED_API_KEY environment variable is required");
   }
   return apiKey;
+}
+
+function setApiKey(apiKey: string) {
+  currentApiKey = apiKey;
 }
 
 // API request helper
@@ -828,56 +842,180 @@ async function handleToolCall(
 // SERVER SETUP
 // =============================================================================
 
-const server = new Server(
-  {
-    name: "mcp-server-templated",
-    version: "1.0.0",
-  },
-  {
-    capabilities: {
-      tools: {},
+// Create MCP server instance
+function createServer() {
+  const mcpServer = new Server(
+    {
+      name: "mcp-server-templated",
+      version: "1.0.0",
     },
-  }
-);
+    {
+      capabilities: {
+        tools: {},
+      },
+    }
+  );
 
-// List available tools
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return { tools };
-});
+  // List available tools
+  mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
+    return { tools };
+  });
 
-// Handle tool calls
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
+  // Handle tool calls
+  mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
 
-  try {
-    const result = await handleToolCall(name, args as Record<string, unknown>);
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(result, null, 2),
-        },
-      ],
-    };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Error: ${errorMessage}`,
-        },
-      ],
-      isError: true,
-    };
-  }
-});
+    try {
+      const result = await handleToolCall(name, args as Record<string, unknown>);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error: ${errorMessage}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  });
 
-// Start the server
-async function main() {
+  return mcpServer;
+}
+
+// Start the server in stdio mode (for local use via npx)
+async function startStdioMode() {
+  const server = createServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Templated MCP server running on stdio");
+}
+
+// Start the server in HTTP/SSE mode (for remote access)
+async function startHttpMode(port: number) {
+  const httpServer = http.createServer(async (req, res) => {
+    // Enable CORS
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+    if (req.method === "OPTIONS") {
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+
+    const url = new URL(req.url || "/", `http://${req.headers.host}`);
+
+    // Health check endpoint
+    if (url.pathname === "/health") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "ok", mode: "sse" }));
+      return;
+    }
+
+    // SSE endpoint - clients connect here
+    if (url.pathname === "/sse" && req.method === "GET") {
+      const apiKey = url.searchParams.get("apiKey");
+      
+      if (!apiKey) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "apiKey query parameter is required" }));
+        return;
+      }
+
+      // Generate session ID
+      const sessionId = Math.random().toString(36).substring(2, 15);
+
+      // Create SSE transport
+      const transport = new SSEServerTransport(`/message?sessionId=${sessionId}`, res);
+      sessions.set(sessionId, { transport, apiKey });
+
+      // Create a new server instance for this session
+      const sessionServer = createServer();
+
+      // Handle cleanup when connection closes
+      res.on("close", () => {
+        sessions.delete(sessionId);
+        console.log(`Session ${sessionId} closed`);
+      });
+
+      // Set the API key for this session
+      setApiKey(apiKey);
+
+      // Connect the server to the transport
+      await sessionServer.connect(transport);
+      console.log(`New SSE session: ${sessionId}`);
+      return;
+    }
+
+    // Message endpoint - clients POST messages here
+    if (url.pathname === "/message" && req.method === "POST") {
+      const sessionId = url.searchParams.get("sessionId");
+
+      if (!sessionId || !sessions.has(sessionId)) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid or missing sessionId" }));
+        return;
+      }
+
+      const session = sessions.get(sessionId)!;
+      
+      // Set the API key for this request
+      setApiKey(session.apiKey);
+
+      // Read the request body
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk.toString();
+      });
+
+      req.on("end", async () => {
+        try {
+          // The transport handles the message
+          await session.transport.handlePostMessage(req, res, body);
+        } catch (error) {
+          console.error("Error handling message:", error);
+          if (!res.headersSent) {
+            res.writeHead(500, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "Internal server error" }));
+          }
+        }
+      });
+      return;
+    }
+
+    // 404 for unknown routes
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Not found" }));
+  });
+
+  httpServer.listen(port, () => {
+    console.log(`Templated MCP server running on http://0.0.0.0:${port}`);
+    console.log(`SSE endpoint: http://0.0.0.0:${port}/sse?apiKey=YOUR_API_KEY`);
+  });
+}
+
+// Main entry point
+async function main() {
+  const port = process.env.PORT ? parseInt(process.env.PORT, 10) : null;
+  
+  if (port) {
+    // HTTP/SSE mode for remote server
+    await startHttpMode(port);
+  } else {
+    // stdio mode for local use
+    await startStdioMode();
+  }
 }
 
 main().catch((error) => {
