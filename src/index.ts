@@ -2,7 +2,7 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -13,10 +13,7 @@ import http from "http";
 // API Configuration
 const API_BASE_URL = "https://api.templated.io";
 
-// Store for active SSE connections (sessionId -> { transport, apiKey })
-const sessions = new Map<string, { transport: SSEServerTransport; apiKey: string }>();
-
-// Get API key - either from environment (stdio mode) or from request (SSE mode)
+// Get API key - either from environment (stdio mode) or from request query (HTTP mode)
 let currentApiKey: string | null = null;
 
 function getApiKey(): string {
@@ -900,13 +897,22 @@ async function startStdioMode() {
   console.error("Templated MCP server running on stdio");
 }
 
-// Start the server in HTTP/SSE mode (for remote access)
+// Start the server in HTTP mode (for remote access)
 async function startHttpMode(port: number) {
+  // Create transport and server
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: undefined, // Stateless mode
+  });
+  
+  const server = createServer();
+  await server.connect(transport);
+
   const httpServer = http.createServer(async (req, res) => {
     // Enable CORS
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Mcp-Session-Id");
+    res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
 
     if (req.method === "OPTIONS") {
       res.writeHead(200);
@@ -919,78 +925,41 @@ async function startHttpMode(port: number) {
     // Health check endpoint
     if (url.pathname === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", mode: "sse" }));
+      res.end(JSON.stringify({ status: "ok", mode: "streamable-http" }));
       return;
     }
 
-    // SSE endpoint - clients connect here
-    if (url.pathname === "/sse" && req.method === "GET") {
-      const apiKey = url.searchParams.get("apiKey");
+    // MCP endpoints - /mcp or /sse (for compatibility)
+    if (url.pathname === "/mcp" || url.pathname === "/sse" || url.pathname === "/") {
+      // Extract API key from query parameter or Authorization header
+      let apiKey = url.searchParams.get("apiKey");
+      
+      if (!apiKey) {
+        const authHeader = req.headers.authorization;
+        if (authHeader?.startsWith("Bearer ")) {
+          apiKey = authHeader.substring(7);
+        }
+      }
       
       if (!apiKey) {
         res.writeHead(401, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "apiKey query parameter is required" }));
+        res.end(JSON.stringify({ error: "API key required. Pass via ?apiKey= query param or Authorization: Bearer header" }));
         return;
       }
 
-      // Generate session ID
-      const sessionId = Math.random().toString(36).substring(2, 15);
-
-      // Create SSE transport
-      const transport = new SSEServerTransport(`/message?sessionId=${sessionId}`, res);
-      sessions.set(sessionId, { transport, apiKey });
-
-      // Create a new server instance for this session
-      const sessionServer = createServer();
-
-      // Handle cleanup when connection closes
-      res.on("close", () => {
-        sessions.delete(sessionId);
-        console.log(`Session ${sessionId} closed`);
-      });
-
-      // Set the API key for this session
+      // Set the API key for this request
       setApiKey(apiKey);
 
-      // Connect the server to the transport
-      await sessionServer.connect(transport);
-      console.log(`New SSE session: ${sessionId}`);
-      return;
-    }
-
-    // Message endpoint - clients POST messages here
-    if (url.pathname === "/message" && req.method === "POST") {
-      const sessionId = url.searchParams.get("sessionId");
-
-      if (!sessionId || !sessions.has(sessionId)) {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Invalid or missing sessionId" }));
-        return;
-      }
-
-      const session = sessions.get(sessionId)!;
-      
-      // Set the API key for this request
-      setApiKey(session.apiKey);
-
-      // Read the request body
-      let body = "";
-      req.on("data", (chunk) => {
-        body += chunk.toString();
-      });
-
-      req.on("end", async () => {
-        try {
-          // The transport handles the message
-          await session.transport.handlePostMessage(req, res, body);
-        } catch (error) {
-          console.error("Error handling message:", error);
-          if (!res.headersSent) {
-            res.writeHead(500, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "Internal server error" }));
-          }
+      // Handle the MCP request
+      try {
+        await transport.handleRequest(req, res);
+      } catch (error) {
+        console.error("Error handling MCP request:", error);
+        if (!res.headersSent) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Internal server error" }));
         }
-      });
+      }
       return;
     }
 
@@ -1001,7 +970,7 @@ async function startHttpMode(port: number) {
 
   httpServer.listen(port, () => {
     console.log(`Templated MCP server running on http://0.0.0.0:${port}`);
-    console.log(`SSE endpoint: http://0.0.0.0:${port}/sse?apiKey=YOUR_API_KEY`);
+    console.log(`MCP endpoint: http://0.0.0.0:${port}/mcp?apiKey=YOUR_API_KEY`);
   });
 }
 
