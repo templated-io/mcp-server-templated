@@ -2,7 +2,7 @@
 
 MCP (Model Context Protocol) server for [Templated](https://templated.io) - the API for automated image, video, and PDF generation.
 
-This server enables AI assistants like Claude, Cursor, and ChatGPT to interact with your Templated account to generate images, videos, and PDFs from templates.
+This server enables AI assistants like Claude and Cursor to interact with your Templated account - generate renders, manage templates, upload assets, and access all API features using natural language.
 
 ## Features
 
@@ -41,12 +41,6 @@ Add to `~/.cursor/mcp.json`:
   }
 }
 ```
-
-#### ChatGPT
-
-1. Go to **Settings → Connected Apps → Add MCP Server**
-2. Enter URL: `https://mcp.templated.io/mcp`
-3. Enter your API key when prompted
 
 ### Option 2: Local Server
 
@@ -155,13 +149,16 @@ npm install -g mcp-server-templated
 
 ## Example Usage
 
-Once configured, you can ask Claude to:
+Once configured, you can ask your AI assistant to:
 
-- "List my templates and show me what's available"
-- "Create a social media post using template [ID] with the text 'Hello World'"
+- "List my templates"
+- "Create a render from template [ID] with the title set to 'Hello World'"
 - "Generate a PDF certificate with the name 'John Doe'"
 - "What layers does template [ID] have?"
-- "Clone my Instagram template and name it 'Instagram Post v2'"
+- "Create a new template called 'Social Post' with a title and image layer"
+- "Clone my Instagram template and rename it"
+- "Upload this image to my account"
+- "Show my API usage and account info"
 
 ### Creating a Render
 
