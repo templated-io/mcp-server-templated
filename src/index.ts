@@ -1,0 +1,819 @@
+#!/usr/bin/env node
+
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  Tool,
+} from "@modelcontextprotocol/sdk/types.js";
+
+// API Configuration
+const API_BASE_URL = "https://api.templated.io";
+
+// Get API key from environment
+function getApiKey(): string {
+  const apiKey = process.env.TEMPLATED_API_KEY;
+  if (!apiKey) {
+    throw new Error("TEMPLATED_API_KEY environment variable is required");
+  }
+  return apiKey;
+}
+
+// API request helper
+async function apiRequest(
+  method: string,
+  path: string,
+  body?: Record<string, unknown>,
+  queryParams?: Record<string, string>
+): Promise<unknown> {
+  const apiKey = getApiKey();
+  
+  let url = `${API_BASE_URL}${path}`;
+  if (queryParams && Object.keys(queryParams).length > 0) {
+    const params = new URLSearchParams(queryParams);
+    url += `?${params.toString()}`;
+  }
+
+  const options: RequestInit = {
+    method,
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+  };
+
+  if (body && (method === "POST" || method === "PUT" || method === "PATCH")) {
+    options.body = JSON.stringify(body);
+  }
+
+  const response = await fetch(url, options);
+  
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`API error (${response.status}): ${errorText}`);
+  }
+
+  // Handle empty responses
+  const text = await response.text();
+  if (!text) {
+    return { success: true };
+  }
+  
+  return JSON.parse(text);
+}
+
+// =============================================================================
+// TOOL DEFINITIONS
+// =============================================================================
+
+const tools: Tool[] = [
+  // ---------------------------------------------------------------------------
+  // RENDER TOOLS
+  // ---------------------------------------------------------------------------
+  {
+    name: "create_render",
+    description: "Create a render (image, video, or PDF) from a template. This is the main tool for generating content. Supports formats: jpg, png, webp, pdf, mp4.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        template: {
+          type: "string",
+          description: "The template ID to render",
+        },
+        format: {
+          type: "string",
+          enum: ["jpg", "png", "webp", "pdf", "mp4"],
+          description: "Output format. Default: jpg",
+        },
+        layers: {
+          type: "object",
+          description: "Layer modifications. Keys are layer names, values are objects with properties like: text, image_url, color, background, hide, etc.",
+          additionalProperties: {
+            type: "object",
+          },
+        },
+        transparent: {
+          type: "boolean",
+          description: "Make background transparent (PNG only)",
+        },
+        duration: {
+          type: "number",
+          description: "Video duration in milliseconds (MP4 only, max 90000)",
+        },
+        fps: {
+          type: "number",
+          description: "Frames per second (MP4 only, 1-60)",
+        },
+        flatten: {
+          type: "boolean",
+          description: "Flatten PDF for print-ready documents",
+        },
+        cmyk: {
+          type: "boolean",
+          description: "Use CMYK color mode (PDF only)",
+        },
+        width: {
+          type: "number",
+          description: "Custom width in pixels (100-5000)",
+        },
+        height: {
+          type: "number",
+          description: "Custom height in pixels (100-5000)",
+        },
+        scale: {
+          type: "number",
+          description: "Scale factor (0.1-2.0)",
+        },
+        name: {
+          type: "string",
+          description: "Custom name for the render",
+        },
+        background: {
+          type: "string",
+          description: "Background color in hex format (e.g., #FF0000)",
+        },
+      },
+      required: ["template"],
+    },
+  },
+  {
+    name: "get_render",
+    description: "Retrieve a specific render by its ID to get the status and file URL",
+    inputSchema: {
+      type: "object",
+      properties: {
+        render_id: {
+          type: "string",
+          description: "The render ID",
+        },
+      },
+      required: ["render_id"],
+    },
+  },
+  {
+    name: "list_renders",
+    description: "List all renders in the account",
+    inputSchema: {
+      type: "object",
+      properties: {
+        page: {
+          type: "number",
+          description: "Page number (default: 0)",
+        },
+        limit: {
+          type: "number",
+          description: "Results per page (default: 25)",
+        },
+      },
+    },
+  },
+  {
+    name: "delete_render",
+    description: "Delete a specific render",
+    inputSchema: {
+      type: "object",
+      properties: {
+        render_id: {
+          type: "string",
+          description: "The render ID to delete",
+        },
+      },
+      required: ["render_id"],
+    },
+  },
+  {
+    name: "merge_renders",
+    description: "Merge multiple PDF renders into a single PDF document",
+    inputSchema: {
+      type: "object",
+      properties: {
+        render_ids: {
+          type: "array",
+          items: { type: "string" },
+          description: "Array of render IDs to merge",
+        },
+        host: {
+          type: "boolean",
+          description: "If true, returns a hosted URL. If false, returns the file directly",
+        },
+      },
+      required: ["render_ids"],
+    },
+  },
+
+  // ---------------------------------------------------------------------------
+  // TEMPLATE TOOLS
+  // ---------------------------------------------------------------------------
+  {
+    name: "list_templates",
+    description: "List all templates in the account. Use this to find template IDs for rendering.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Search query to filter templates by name",
+        },
+        page: {
+          type: "number",
+          description: "Page number (default: 0)",
+        },
+        limit: {
+          type: "number",
+          description: "Results per page (default: 25)",
+        },
+        width: {
+          type: "number",
+          description: "Filter by template width",
+        },
+        height: {
+          type: "number",
+          description: "Filter by template height",
+        },
+        tags: {
+          type: "string",
+          description: "Filter by tags (comma-separated)",
+        },
+        includeLayers: {
+          type: "boolean",
+          description: "Include layer information in response",
+        },
+      },
+    },
+  },
+  {
+    name: "get_template",
+    description: "Retrieve a specific template by ID",
+    inputSchema: {
+      type: "object",
+      properties: {
+        template_id: {
+          type: "string",
+          description: "The template ID",
+        },
+      },
+      required: ["template_id"],
+    },
+  },
+  {
+    name: "get_template_layers",
+    description: "Get all layers of a template. Use this to understand what layers can be modified when creating a render.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        template_id: {
+          type: "string",
+          description: "The template ID",
+        },
+      },
+      required: ["template_id"],
+    },
+  },
+  {
+    name: "get_template_pages",
+    description: "Get all pages of a multi-page template",
+    inputSchema: {
+      type: "object",
+      properties: {
+        template_id: {
+          type: "string",
+          description: "The template ID",
+        },
+      },
+      required: ["template_id"],
+    },
+  },
+  {
+    name: "create_template",
+    description: "Create a new template programmatically",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Template name",
+        },
+        width: {
+          type: "number",
+          description: "Template width in pixels",
+        },
+        height: {
+          type: "number",
+          description: "Template height in pixels",
+        },
+        layers: {
+          type: "array",
+          description: "Array of layer objects defining the template structure",
+        },
+      },
+      required: ["name", "width", "height"],
+    },
+  },
+  {
+    name: "update_template",
+    description: "Update an existing template",
+    inputSchema: {
+      type: "object",
+      properties: {
+        template_id: {
+          type: "string",
+          description: "The template ID to update",
+        },
+        name: {
+          type: "string",
+          description: "New template name",
+        },
+        description: {
+          type: "string",
+          description: "New template description",
+        },
+        width: {
+          type: "number",
+          description: "New width in pixels",
+        },
+        height: {
+          type: "number",
+          description: "New height in pixels",
+        },
+        layers: {
+          type: "array",
+          description: "Updated layer definitions",
+        },
+        replaceLayers: {
+          type: "boolean",
+          description: "If true, replaces all layers. If false, merges with existing",
+        },
+      },
+      required: ["template_id"],
+    },
+  },
+  {
+    name: "clone_template",
+    description: "Create a copy of an existing template",
+    inputSchema: {
+      type: "object",
+      properties: {
+        template_id: {
+          type: "string",
+          description: "The template ID to clone",
+        },
+        name: {
+          type: "string",
+          description: "Name for the cloned template",
+        },
+      },
+      required: ["template_id"],
+    },
+  },
+  {
+    name: "delete_template",
+    description: "Delete a template",
+    inputSchema: {
+      type: "object",
+      properties: {
+        template_id: {
+          type: "string",
+          description: "The template ID to delete",
+        },
+      },
+      required: ["template_id"],
+    },
+  },
+  {
+    name: "list_template_renders",
+    description: "List all renders created from a specific template",
+    inputSchema: {
+      type: "object",
+      properties: {
+        template_id: {
+          type: "string",
+          description: "The template ID",
+        },
+        page: {
+          type: "number",
+          description: "Page number",
+        },
+        limit: {
+          type: "number",
+          description: "Results per page",
+        },
+      },
+      required: ["template_id"],
+    },
+  },
+
+  // ---------------------------------------------------------------------------
+  // FOLDER TOOLS
+  // ---------------------------------------------------------------------------
+  {
+    name: "list_folders",
+    description: "List all folders in the account",
+    inputSchema: {
+      type: "object",
+      properties: {
+        page: {
+          type: "number",
+          description: "Page number",
+        },
+        limit: {
+          type: "number",
+          description: "Results per page",
+        },
+      },
+    },
+  },
+  {
+    name: "create_folder",
+    description: "Create a new folder to organize templates",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Folder name",
+        },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "update_folder",
+    description: "Update a folder's name",
+    inputSchema: {
+      type: "object",
+      properties: {
+        folder_id: {
+          type: "string",
+          description: "The folder ID",
+        },
+        name: {
+          type: "string",
+          description: "New folder name",
+        },
+      },
+      required: ["folder_id", "name"],
+    },
+  },
+  {
+    name: "delete_folder",
+    description: "Delete a folder",
+    inputSchema: {
+      type: "object",
+      properties: {
+        folder_id: {
+          type: "string",
+          description: "The folder ID to delete",
+        },
+      },
+      required: ["folder_id"],
+    },
+  },
+
+  // ---------------------------------------------------------------------------
+  // UPLOAD TOOLS
+  // ---------------------------------------------------------------------------
+  {
+    name: "list_uploads",
+    description: "List all uploaded assets (images, videos)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        page: {
+          type: "number",
+          description: "Page number",
+        },
+        limit: {
+          type: "number",
+          description: "Results per page",
+        },
+      },
+    },
+  },
+  {
+    name: "create_upload",
+    description: "Upload a file from a URL",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "URL of the file to upload",
+        },
+        name: {
+          type: "string",
+          description: "Optional name for the upload",
+        },
+      },
+      required: ["url"],
+    },
+  },
+  {
+    name: "delete_upload",
+    description: "Delete an uploaded asset",
+    inputSchema: {
+      type: "object",
+      properties: {
+        upload_id: {
+          type: "string",
+          description: "The upload ID to delete",
+        },
+      },
+      required: ["upload_id"],
+    },
+  },
+
+  // ---------------------------------------------------------------------------
+  // FONT TOOLS
+  // ---------------------------------------------------------------------------
+  {
+    name: "list_fonts",
+    description: "List all custom fonts uploaded to the account",
+    inputSchema: {
+      type: "object",
+      properties: {
+        page: {
+          type: "number",
+          description: "Page number",
+        },
+        limit: {
+          type: "number",
+          description: "Results per page",
+        },
+      },
+    },
+  },
+  {
+    name: "upload_font",
+    description: "Upload a custom font from a URL",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "URL of the font file (TTF, OTF, WOFF, WOFF2)",
+        },
+        name: {
+          type: "string",
+          description: "Font family name",
+        },
+      },
+      required: ["url", "name"],
+    },
+  },
+  {
+    name: "delete_font",
+    description: "Delete a custom font",
+    inputSchema: {
+      type: "object",
+      properties: {
+        font_id: {
+          type: "string",
+          description: "The font ID to delete",
+        },
+      },
+      required: ["font_id"],
+    },
+  },
+
+  // ---------------------------------------------------------------------------
+  // ACCOUNT TOOLS
+  // ---------------------------------------------------------------------------
+  {
+    name: "get_account",
+    description: "Get account information including API usage and quota",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+];
+
+// =============================================================================
+// TOOL HANDLERS
+// =============================================================================
+
+async function handleToolCall(
+  name: string,
+  args: Record<string, unknown>
+): Promise<unknown> {
+  switch (name) {
+    // RENDER HANDLERS
+    case "create_render": {
+      const body: Record<string, unknown> = {
+        template: args.template,
+      };
+      if (args.format) body.format = args.format;
+      if (args.layers) body.layers = args.layers;
+      if (args.transparent) body.transparent = args.transparent;
+      if (args.duration) body.duration = args.duration;
+      if (args.fps) body.fps = args.fps;
+      if (args.flatten) body.flatten = args.flatten;
+      if (args.cmyk) body.cmyk = args.cmyk;
+      if (args.width) body.width = args.width;
+      if (args.height) body.height = args.height;
+      if (args.scale) body.scale = args.scale;
+      if (args.name) body.name = args.name;
+      if (args.background) body.background = args.background;
+      return apiRequest("POST", "/v1/render", body);
+    }
+
+    case "get_render":
+      return apiRequest("GET", `/v1/render/${args.render_id}`);
+
+    case "list_renders": {
+      const params: Record<string, string> = {};
+      if (args.page !== undefined) params.page = String(args.page);
+      if (args.limit !== undefined) params.limit = String(args.limit);
+      return apiRequest("GET", "/v1/renders", undefined, params);
+    }
+
+    case "delete_render":
+      return apiRequest("DELETE", `/v1/render/${args.render_id}`);
+
+    case "merge_renders":
+      return apiRequest("POST", "/v1/renders/merge", {
+        ids: args.render_ids,
+        host: args.host ?? true,
+      });
+
+    // TEMPLATE HANDLERS
+    case "list_templates": {
+      const params: Record<string, string> = {};
+      if (args.query) params.query = String(args.query);
+      if (args.page !== undefined) params.page = String(args.page);
+      if (args.limit !== undefined) params.limit = String(args.limit);
+      if (args.width !== undefined) params.width = String(args.width);
+      if (args.height !== undefined) params.height = String(args.height);
+      if (args.tags) params.tags = String(args.tags);
+      if (args.includeLayers) params.includeLayers = "true";
+      return apiRequest("GET", "/v1/templates", undefined, params);
+    }
+
+    case "get_template":
+      return apiRequest("GET", `/v1/template/${args.template_id}`);
+
+    case "get_template_layers":
+      return apiRequest("GET", `/v1/template/${args.template_id}/layers`);
+
+    case "get_template_pages":
+      return apiRequest("GET", `/v1/template/${args.template_id}/pages`);
+
+    case "create_template": {
+      const body: Record<string, unknown> = {
+        name: args.name,
+        width: args.width,
+        height: args.height,
+      };
+      if (args.layers) body.layers = args.layers;
+      return apiRequest("POST", "/v1/template", body);
+    }
+
+    case "update_template": {
+      const body: Record<string, unknown> = {};
+      if (args.name) body.name = args.name;
+      if (args.description) body.description = args.description;
+      if (args.width) body.width = args.width;
+      if (args.height) body.height = args.height;
+      if (args.layers) body.layers = args.layers;
+      const params: Record<string, string> = {};
+      if (args.replaceLayers) params.replaceLayers = "true";
+      return apiRequest("PUT", `/v1/template/${args.template_id}`, body, params);
+    }
+
+    case "clone_template": {
+      const body: Record<string, unknown> = {};
+      if (args.name) body.name = args.name;
+      return apiRequest("POST", `/v1/template/${args.template_id}/clone`, body);
+    }
+
+    case "delete_template":
+      return apiRequest("DELETE", `/v1/template/${args.template_id}`);
+
+    case "list_template_renders": {
+      const params: Record<string, string> = {};
+      if (args.page !== undefined) params.page = String(args.page);
+      if (args.limit !== undefined) params.limit = String(args.limit);
+      return apiRequest("GET", `/v1/template/${args.template_id}/renders`, undefined, params);
+    }
+
+    // FOLDER HANDLERS
+    case "list_folders": {
+      const params: Record<string, string> = {};
+      if (args.page !== undefined) params.page = String(args.page);
+      if (args.limit !== undefined) params.limit = String(args.limit);
+      return apiRequest("GET", "/v1/folders", undefined, params);
+    }
+
+    case "create_folder":
+      return apiRequest("POST", "/v1/folder", { name: args.name });
+
+    case "update_folder":
+      return apiRequest("PUT", `/v1/folder/${args.folder_id}`, { name: args.name });
+
+    case "delete_folder":
+      return apiRequest("DELETE", `/v1/folder/${args.folder_id}`);
+
+    // UPLOAD HANDLERS
+    case "list_uploads": {
+      const params: Record<string, string> = {};
+      if (args.page !== undefined) params.page = String(args.page);
+      if (args.limit !== undefined) params.limit = String(args.limit);
+      return apiRequest("GET", "/v1/uploads", undefined, params);
+    }
+
+    case "create_upload": {
+      const body: Record<string, unknown> = { url: args.url };
+      if (args.name) body.name = args.name;
+      return apiRequest("POST", "/v1/upload", body);
+    }
+
+    case "delete_upload":
+      return apiRequest("DELETE", `/v1/upload/${args.upload_id}`);
+
+    // FONT HANDLERS
+    case "list_fonts": {
+      const params: Record<string, string> = {};
+      if (args.page !== undefined) params.page = String(args.page);
+      if (args.limit !== undefined) params.limit = String(args.limit);
+      return apiRequest("GET", "/v1/fonts", undefined, params);
+    }
+
+    case "upload_font":
+      return apiRequest("POST", "/v1/font", {
+        url: args.url,
+        name: args.name,
+      });
+
+    case "delete_font":
+      return apiRequest("DELETE", `/v1/font/${args.font_id}`);
+
+    // ACCOUNT HANDLERS
+    case "get_account":
+      return apiRequest("GET", "/v1/account");
+
+    default:
+      throw new Error(`Unknown tool: ${name}`);
+  }
+}
+
+// =============================================================================
+// SERVER SETUP
+// =============================================================================
+
+const server = new Server(
+  {
+    name: "mcp-server-templated",
+    version: "1.0.0",
+  },
+  {
+    capabilities: {
+      tools: {},
+    },
+  }
+);
+
+// List available tools
+server.setRequestHandler(ListToolsRequestSchema, async () => {
+  return { tools };
+});
+
+// Handle tool calls
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const { name, arguments: args } = request.params;
+
+  try {
+    const result = await handleToolCall(name, args as Record<string, unknown>);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(result, null, 2),
+        },
+      ],
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Error: ${errorMessage}`,
+        },
+      ],
+      isError: true,
+    };
+  }
+});
+
+// Start the server
+async function main() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error("Templated MCP server running on stdio");
+}
+
+main().catch((error) => {
+  console.error("Fatal error:", error);
+  process.exit(1);
+});
