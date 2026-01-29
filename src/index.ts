@@ -21,10 +21,7 @@ function getApiKey(): string {
     return currentApiKey;
   }
   const apiKey = process.env.TEMPLATED_API_KEY;
-  if (!apiKey) {
-    throw new Error("TEMPLATED_API_KEY environment variable is required");
-  }
-  return apiKey;
+  return apiKey || "";
 }
 
 function setApiKey(apiKey: string) {
@@ -39,6 +36,10 @@ async function apiRequest(
   queryParams?: Record<string, string>
 ): Promise<unknown> {
   const apiKey = getApiKey();
+  
+  if (!apiKey) {
+    throw new Error("API key required. Please provide your Templated API key via ?apiKey= query parameter or Authorization header.");
+  }
   
   let url = `${API_BASE_URL}${path}`;
   if (queryParams && Object.keys(queryParams).length > 0) {
@@ -1058,9 +1059,22 @@ async function startHttpMode(port: number) {
       return;
     }
 
+    // OpenAI domain verification endpoint (token set via OPENAI_VERIFICATION_TOKEN env var)
+    if (url.pathname === "/.well-known/openai-apps-challenge") {
+      const verificationToken = process.env.OPENAI_VERIFICATION_TOKEN;
+      if (verificationToken) {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end(verificationToken);
+      } else {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Not configured" }));
+      }
+      return;
+    }
+
     // MCP endpoints - /mcp or /sse (for compatibility)
     if (url.pathname === "/mcp" || url.pathname === "/sse" || url.pathname === "/") {
-      // Extract API key from query parameter or Authorization header
+      // Extract API key from query parameter or Authorization header (optional for tool listing)
       let apiKey = url.searchParams.get("apiKey");
       
       if (!apiKey) {
@@ -1070,14 +1084,13 @@ async function startHttpMode(port: number) {
         }
       }
       
-      if (!apiKey) {
-        res.writeHead(401, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "API key required. Pass via ?apiKey= query param or Authorization: Bearer header" }));
-        return;
+      // Set the API key if provided (tool calls will fail if not set)
+      if (apiKey) {
+        setApiKey(apiKey);
+      } else {
+        // Clear API key for unauthenticated requests (allows tool listing but not execution)
+        setApiKey("");
       }
-
-      // Set the API key for this request
-      setApiKey(apiKey);
 
       // Handle the MCP request
       try {
