@@ -105,7 +105,7 @@ const tools: Tool[] = [
         },
         layers: {
           type: "object",
-          description: "Layer modifications. Keys are layer names, values are objects with properties like: text, image_url, color, background, hide, etc.",
+          description: "Layer modifications. Keys are layer names, values are objects with properties like: text, image_url, color, background, hide, animation, etc. The 'animation' property (MP4 only) is an object with: 'in' (entrance: type=slide|fade|zoom|rotate, direction, duration, writingStyle), 'loop' (type=spin|pulse, duration), 'out' (exit: type=slide|fade|zoom, direction, duration), 'start' (ms when layer appears), 'end' (ms when layer disappears). All animation durations are in milliseconds.",
           additionalProperties: {
             type: "object",
           },
@@ -368,6 +368,10 @@ const tools: Tool[] = [
           type: "string",
           description: "Template background color (e.g., '#ffffff', 'rgb(255,255,255)', 'transparent')",
         },
+        duration: {
+          type: "number",
+          description: "Default video duration in milliseconds for MP4 renders (e.g., 5000 for 5 seconds). Used as fallback when no duration is specified at render time.",
+        },
         layers: {
           type: "array",
           description: "Array of layer objects. Each layer MUST have 'layer' (unique name) and 'type' fields.",
@@ -413,6 +417,41 @@ const tools: Tool[] = [
               opacity: { type: "number", description: "Opacity from 0 to 1" },
               hide: { type: "boolean", description: "Whether layer is hidden" },
               order: { type: "number", description: "Layer stacking order (lower = behind)" },
+              animation: {
+                type: "object",
+                description: "Animation config for video (MP4) renders. All time values are in milliseconds. Contains 'in' (entrance), 'loop', 'out' (exit), 'start' and 'end' timeline.",
+                properties: {
+                  in: {
+                    type: "object",
+                    description: "Entrance animation",
+                    properties: {
+                      type: { type: "string", enum: ["slide", "fade", "zoom", "rotate"], description: "Animation type" },
+                      direction: { type: "string", enum: ["left", "right", "up", "down", "in", "out"], description: "Direction" },
+                      duration: { type: "integer", description: "Duration in milliseconds" },
+                      writingStyle: { type: "string", enum: ["block", "word", "character"], description: "Text animation style" },
+                    },
+                  },
+                  loop: {
+                    type: "object",
+                    description: "Looping animation",
+                    properties: {
+                      type: { type: "string", enum: ["spin", "pulse"], description: "Animation type" },
+                      duration: { type: "integer", description: "Duration in milliseconds per cycle" },
+                    },
+                  },
+                  out: {
+                    type: "object",
+                    description: "Exit animation",
+                    properties: {
+                      type: { type: "string", enum: ["slide", "fade", "zoom"], description: "Animation type" },
+                      direction: { type: "string", enum: ["left", "right", "up", "down", "in", "out"], description: "Direction" },
+                      duration: { type: "integer", description: "Duration in milliseconds" },
+                    },
+                  },
+                  start: { type: "integer", description: "Time in milliseconds when layer becomes visible (default: 0)" },
+                  end: { type: "integer", description: "Time in milliseconds when layer disappears (default: video duration)" },
+                },
+              },
             },
             required: ["layer", "type"],
           },
@@ -456,6 +495,10 @@ const tools: Tool[] = [
           type: "string",
           description: "Template background color",
         },
+        duration: {
+          type: "number",
+          description: "Default video duration in milliseconds for MP4 renders (e.g., 5000 for 5 seconds)",
+        },
         layers: {
           type: "array",
           description: "Layer definitions. Each must have 'layer' (unique name) and 'type' (text/image/shape/rating).",
@@ -470,6 +513,17 @@ const tools: Tool[] = [
               font_family: { type: "string" }, font_size: { type: "string" },
               image_url: { type: "string" }, background: { type: "string" },
               html: { type: "string", description: "SVG content for shape layers" },
+              animation: {
+                type: "object",
+                description: "Animation config for video (MP4) renders. All time values in milliseconds.",
+                properties: {
+                  in: { type: "object", properties: { type: { type: "string" }, direction: { type: "string" }, duration: { type: "integer" }, writingStyle: { type: "string" } } },
+                  loop: { type: "object", properties: { type: { type: "string" }, duration: { type: "integer" } } },
+                  out: { type: "object", properties: { type: { type: "string" }, direction: { type: "string" }, duration: { type: "integer" } } },
+                  start: { type: "integer", description: "When layer appears (ms)" },
+                  end: { type: "integer", description: "When layer disappears (ms)" },
+                },
+              },
             },
             required: ["layer", "type"],
           },
@@ -1056,6 +1110,22 @@ async function startHttpMode(port: number) {
     if (url.pathname === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ status: "ok", mode: "streamable-http" }));
+      return;
+    }
+
+    // OAuth 2.0 Authorization Server Metadata (RFC 8414)
+    // Used by MCP clients to discover OAuth endpoints
+    if (url.pathname === "/.well-known/oauth-authorization-server") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        issuer: "https://api.templated.io",
+        authorization_endpoint: "https://api.templated.io/oauth/authorize",
+        token_endpoint: "https://api.templated.io/oauth/token",
+        response_types_supported: ["code"],
+        grant_types_supported: ["authorization_code"],
+        code_challenge_methods_supported: ["S256"],
+        token_endpoint_auth_methods_supported: ["client_secret_post", "client_secret_basic"]
+      }));
       return;
     }
 
