@@ -28,6 +28,34 @@ function setApiKey(apiKey: string) {
   currentApiKey = apiKey;
 }
 
+// Folder scoping - when set, all operations are restricted to this folder
+let currentFolderId: string | null = null;
+
+function getFolderId(): string | null {
+  if (currentFolderId) {
+    return currentFolderId;
+  }
+  return process.env.TEMPLATED_FOLDER_ID || null;
+}
+
+function setFolderId(folderId: string) {
+  currentFolderId = folderId;
+}
+
+// External ID scoping - when set, all operations are restricted to this external ID
+let currentExternalId: string | null = null;
+
+function getExternalId(): string | null {
+  if (currentExternalId) {
+    return currentExternalId;
+  }
+  return process.env.TEMPLATED_EXTERNAL_ID || null;
+}
+
+function setExternalId(externalId: string) {
+  currentExternalId = externalId;
+}
+
 // API request helper
 async function apiRequest(
   method: string,
@@ -73,6 +101,36 @@ async function apiRequest(
   }
   
   return JSON.parse(text);
+}
+
+// Validate that a template belongs to the configured folder
+async function validateTemplateInFolder(templateId: string): Promise<void> {
+  const folderId = getFolderId();
+  if (!folderId) return;
+
+  const template = await apiRequest("GET", `/v1/template/${templateId}`) as Record<string, unknown>;
+  if (template.folderId !== folderId) {
+    throw new Error("Template not found in the configured folder");
+  }
+}
+
+// Move a template into the configured folder
+async function moveTemplateToFolder(templateId: string): Promise<void> {
+  const folderId = getFolderId();
+  if (!folderId) return;
+
+  await apiRequest("PUT", `/v1/folder/${folderId}/template/${templateId}`);
+}
+
+// Validate that a template belongs to the configured external ID
+async function validateTemplateByExternalId(templateId: string): Promise<void> {
+  const externalId = getExternalId();
+  if (!externalId) return;
+
+  const template = await apiRequest("GET", `/v1/template/${templateId}`) as Record<string, unknown>;
+  if (template.externalId !== externalId) {
+    throw new Error("Template not found for the configured external ID");
+  }
 }
 
 // =============================================================================
@@ -858,6 +916,8 @@ async function handleToolCall(
   switch (name) {
     // RENDER HANDLERS
     case "create_render": {
+      await validateTemplateInFolder(args.template as string);
+      await validateTemplateByExternalId(args.template as string);
       const body: Record<string, unknown> = {
         template: args.template,
       };
@@ -883,7 +943,11 @@ async function handleToolCall(
       const params: Record<string, string> = {};
       if (args.page !== undefined) params.page = String(args.page);
       if (args.limit !== undefined) params.limit = String(args.limit);
-      return apiRequest("GET", "/v1/renders", undefined, params);
+      const folderId = getFolderId();
+      const externalId = getExternalId();
+      if (externalId) params.externalId = externalId;
+      const rendersPath = folderId ? `/v1/folder/${folderId}/renders` : "/v1/renders";
+      return apiRequest("GET", rendersPath, undefined, params);
     }
 
     case "delete_render":
@@ -905,16 +969,26 @@ async function handleToolCall(
       if (args.height !== undefined) params.height = String(args.height);
       if (args.tags) params.tags = String(args.tags);
       if (args.includeLayers) params.includeLayers = "true";
-      return apiRequest("GET", "/v1/templates", undefined, params);
+      const folderId = getFolderId();
+      const externalId = getExternalId();
+      if (externalId) params.externalId = externalId;
+      const templatesPath = folderId ? `/v1/folder/${folderId}/templates` : "/v1/templates";
+      return apiRequest("GET", templatesPath, undefined, params);
     }
 
     case "get_template":
+      await validateTemplateInFolder(args.template_id as string);
+      await validateTemplateByExternalId(args.template_id as string);
       return apiRequest("GET", `/v1/template/${args.template_id}`);
 
     case "get_template_layers":
+      await validateTemplateInFolder(args.template_id as string);
+      await validateTemplateByExternalId(args.template_id as string);
       return apiRequest("GET", `/v1/template/${args.template_id}/layers`);
 
     case "get_template_pages":
+      await validateTemplateInFolder(args.template_id as string);
+      await validateTemplateByExternalId(args.template_id as string);
       return apiRequest("GET", `/v1/template/${args.template_id}/pages`);
 
     case "create_template": {
@@ -924,10 +998,16 @@ async function handleToolCall(
         height: args.height,
       };
       if (args.layers) body.layers = args.layers;
-      return apiRequest("POST", "/v1/template", body);
+      const externalId = getExternalId();
+      if (externalId) body.externalId = externalId;
+      const result = await apiRequest("POST", "/v1/template", body) as Record<string, unknown>;
+      await moveTemplateToFolder(result.id as string);
+      return result;
     }
 
     case "update_template": {
+      await validateTemplateInFolder(args.template_id as string);
+      await validateTemplateByExternalId(args.template_id as string);
       const body: Record<string, unknown> = {};
       if (args.name) body.name = args.name;
       if (args.description) body.description = args.description;
@@ -940,15 +1020,28 @@ async function handleToolCall(
     }
 
     case "clone_template": {
+      await validateTemplateInFolder(args.template_id as string);
+      await validateTemplateByExternalId(args.template_id as string);
       const body: Record<string, unknown> = {};
       if (args.name) body.name = args.name;
-      return apiRequest("POST", `/v1/template/${args.template_id}/clone`, body);
+      const result = await apiRequest("POST", `/v1/template/${args.template_id}/clone`, body) as Record<string, unknown>;
+      await moveTemplateToFolder(result.id as string);
+      // Set externalId on the clone
+      const externalId = getExternalId();
+      if (externalId) {
+        await apiRequest("PUT", `/v1/template/${result.id}`, { externalId });
+      }
+      return result;
     }
 
     case "delete_template":
+      await validateTemplateInFolder(args.template_id as string);
+      await validateTemplateByExternalId(args.template_id as string);
       return apiRequest("DELETE", `/v1/template/${args.template_id}`);
 
     case "list_template_renders": {
+      await validateTemplateInFolder(args.template_id as string);
+      await validateTemplateByExternalId(args.template_id as string);
       const params: Record<string, string> = {};
       if (args.page !== undefined) params.page = String(args.page);
       if (args.limit !== undefined) params.limit = String(args.limit);
@@ -1035,7 +1128,41 @@ function createServer() {
 
   // List available tools
   mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
-    return { tools };
+    const folderId = getFolderId();
+    const externalId = getExternalId();
+
+    if (!folderId && !externalId) {
+      return { tools };
+    }
+
+    // When scoped: hide folder management tools and update descriptions
+    const hiddenTools = new Set<string>();
+    if (folderId) {
+      hiddenTools.add("list_folders");
+      hiddenTools.add("create_folder");
+      hiddenTools.add("update_folder");
+      hiddenTools.add("delete_folder");
+    }
+
+    const scopeLabel = folderId && externalId
+      ? "the configured folder and external ID"
+      : folderId
+        ? "the configured folder"
+        : "the configured external ID";
+
+    const scopedTools = tools
+      .filter((tool) => !hiddenTools.has(tool.name))
+      .map((tool) => {
+        if (tool.name === "list_templates") {
+          return { ...tool, description: `List templates in ${scopeLabel}. Use this to find template IDs for rendering.` };
+        }
+        if (tool.name === "list_renders") {
+          return { ...tool, description: `List renders in ${scopeLabel}` };
+        }
+        return tool;
+      });
+
+    return { tools: scopedTools };
   });
 
   // Handle tool calls
@@ -1160,6 +1287,18 @@ async function startHttpMode(port: number) {
       } else {
         // Clear API key for unauthenticated requests (allows tool listing but not execution)
         setApiKey("");
+      }
+
+      // Set folder ID if provided (scopes all operations to this folder)
+      const folderId = url.searchParams.get("folderId");
+      if (folderId) {
+        setFolderId(folderId);
+      }
+
+      // Set external ID if provided (scopes all operations to this external ID)
+      const externalId = url.searchParams.get("externalId");
+      if (externalId) {
+        setExternalId(externalId);
       }
 
       // Handle the MCP request
