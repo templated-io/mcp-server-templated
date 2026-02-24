@@ -997,6 +997,8 @@ async function handleToolCall(
         width: args.width,
         height: args.height,
       };
+      if (args.background) body.background = args.background;
+      if (args.duration) body.duration = args.duration;
       if (args.layers) body.layers = args.layers;
       const externalId = getExternalId();
       if (externalId) body.externalId = externalId;
@@ -1289,17 +1291,13 @@ async function startHttpMode(port: number) {
         setApiKey("");
       }
 
-      // Set folder ID if provided (scopes all operations to this folder)
+      // Set folder ID if provided (scopes all operations to this folder), clear otherwise
       const folderId = url.searchParams.get("folderId");
-      if (folderId) {
-        setFolderId(folderId);
-      }
+      currentFolderId = folderId || null;
 
-      // Set external ID if provided (scopes all operations to this external ID)
+      // Set external ID if provided (scopes all operations to this external ID), clear otherwise
       const externalId = url.searchParams.get("externalId");
-      if (externalId) {
-        setExternalId(externalId);
-      }
+      currentExternalId = externalId || null;
 
       // Handle the MCP request
       try {
