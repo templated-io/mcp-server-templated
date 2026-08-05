@@ -145,6 +145,7 @@ const tools: Tool[] = [
     name: "create_render",
     description: "Create a render (image, video, or PDF) from a template. This is the main tool for generating content. Supports formats: jpg, png, webp, pdf, mp4.",
     annotations: {
+      title: "Create Render",
       readOnlyHint: false,
       destructiveHint: false,
       openWorldHint: true,
@@ -216,6 +217,7 @@ const tools: Tool[] = [
     name: "get_render",
     description: "Retrieve a specific render by its ID to get the status and file URL",
     annotations: {
+      title: "Get Render",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -235,6 +237,7 @@ const tools: Tool[] = [
     name: "list_renders",
     description: "List all renders in the account",
     annotations: {
+      title: "List Renders",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -257,6 +260,7 @@ const tools: Tool[] = [
     name: "delete_render",
     description: "Delete a specific render",
     annotations: {
+      title: "Delete Render",
       readOnlyHint: false,
       destructiveHint: true,
       openWorldHint: true,
@@ -276,6 +280,7 @@ const tools: Tool[] = [
     name: "merge_renders",
     description: "Merge multiple PDF renders into a single PDF document",
     annotations: {
+      title: "Merge Renders into PDF",
       readOnlyHint: false,
       destructiveHint: false,
       openWorldHint: true,
@@ -304,6 +309,7 @@ const tools: Tool[] = [
     name: "list_templates",
     description: "List all templates in the account. Use this to find template IDs for rendering.",
     annotations: {
+      title: "List Templates",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -346,6 +352,7 @@ const tools: Tool[] = [
     name: "get_template",
     description: "Retrieve a specific template by ID",
     annotations: {
+      title: "Get Template",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -365,6 +372,7 @@ const tools: Tool[] = [
     name: "get_template_layers",
     description: "Get all layers of a template. Use this to understand what layers can be modified when creating a render.",
     annotations: {
+      title: "Get Template Layers",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -384,6 +392,7 @@ const tools: Tool[] = [
     name: "get_template_pages",
     description: "Get all pages of a multi-page template",
     annotations: {
+      title: "Get Template Pages",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -403,6 +412,7 @@ const tools: Tool[] = [
     name: "create_template",
     description: "Create a new template programmatically with layers. IMPORTANT: Each layer must have a 'layer' field (unique identifier/name), not 'name'. Valid layer types are: 'text', 'image', 'shape', 'rating'. Use 'shape' for rectangles, circles, and other shapes - shapes require an 'html' field with SVG content.",
     annotations: {
+      title: "Create Template",
       readOnlyHint: false,
       destructiveHint: false,
       openWorldHint: true,
@@ -522,6 +532,7 @@ const tools: Tool[] = [
     name: "update_template",
     description: "Update an existing template. IMPORTANT: Each layer must have a 'layer' field (unique identifier), not 'name'. Valid types: 'text', 'image', 'shape', 'rating'.",
     annotations: {
+      title: "Update Template",
       readOnlyHint: false,
       destructiveHint: true,
       openWorldHint: true,
@@ -598,6 +609,7 @@ const tools: Tool[] = [
     name: "clone_template",
     description: "Create a copy of an existing template",
     annotations: {
+      title: "Clone Template",
       readOnlyHint: false,
       destructiveHint: false,
       openWorldHint: true,
@@ -621,6 +633,7 @@ const tools: Tool[] = [
     name: "delete_template",
     description: "Delete a template",
     annotations: {
+      title: "Delete Template",
       readOnlyHint: false,
       destructiveHint: true,
       openWorldHint: true,
@@ -640,6 +653,7 @@ const tools: Tool[] = [
     name: "list_template_renders",
     description: "List all renders created from a specific template",
     annotations: {
+      title: "List Renders from Template",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -671,6 +685,7 @@ const tools: Tool[] = [
     name: "list_folders",
     description: "List all folders in the account",
     annotations: {
+      title: "List Folders",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -693,6 +708,7 @@ const tools: Tool[] = [
     name: "create_folder",
     description: "Create a new folder to organize templates",
     annotations: {
+      title: "Create Folder",
       readOnlyHint: false,
       destructiveHint: false,
       openWorldHint: true,
@@ -712,6 +728,7 @@ const tools: Tool[] = [
     name: "update_folder",
     description: "Update a folder's name",
     annotations: {
+      title: "Update Folder",
       readOnlyHint: false,
       destructiveHint: true,
       openWorldHint: true,
@@ -735,6 +752,7 @@ const tools: Tool[] = [
     name: "delete_folder",
     description: "Delete a folder",
     annotations: {
+      title: "Delete Folder",
       readOnlyHint: false,
       destructiveHint: true,
       openWorldHint: true,
@@ -758,6 +776,7 @@ const tools: Tool[] = [
     name: "list_uploads",
     description: "List all uploaded assets (images, videos)",
     annotations: {
+      title: "List Uploads",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -780,6 +799,7 @@ const tools: Tool[] = [
     name: "create_upload",
     description: "Upload a file from a URL",
     annotations: {
+      title: "Upload Image from URL",
       readOnlyHint: false,
       destructiveHint: false,
       openWorldHint: true,
@@ -803,6 +823,7 @@ const tools: Tool[] = [
     name: "delete_upload",
     description: "Delete an uploaded asset",
     annotations: {
+      title: "Delete Upload",
       readOnlyHint: false,
       destructiveHint: true,
       openWorldHint: true,
@@ -826,6 +847,7 @@ const tools: Tool[] = [
     name: "list_fonts",
     description: "List all custom fonts uploaded to the account",
     annotations: {
+      title: "List Fonts",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
@@ -848,6 +870,7 @@ const tools: Tool[] = [
     name: "upload_font",
     description: "Upload a custom font from a URL",
     annotations: {
+      title: "Upload Font",
       readOnlyHint: false,
       destructiveHint: false,
       openWorldHint: true,
@@ -871,6 +894,7 @@ const tools: Tool[] = [
     name: "delete_font",
     description: "Delete a custom font",
     annotations: {
+      title: "Delete Font",
       readOnlyHint: false,
       destructiveHint: true,
       openWorldHint: true,
@@ -894,6 +918,7 @@ const tools: Tool[] = [
     name: "get_account",
     description: "Get account information including API usage and quota",
     annotations: {
+      title: "Get Account Info",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: true,
