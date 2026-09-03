@@ -26,7 +26,7 @@ This server enables AI assistants like Claude, Cursor, and ChatGPT to interact w
 
 Use our hosted MCP server - no installation required, always up-to-date.
 
-**Endpoint:** `https://mcp.templated.io/mcp?apiKey=YOUR_API_KEY`
+**Endpoint:** `https://mcp.templated.io/mcp` (OAuth login) — or `https://mcp.templated.io/mcp?apiKey=YOUR_API_KEY` for automation
 
 #### Cursor IDE
 
@@ -45,9 +45,11 @@ Add to `~/.cursor/mcp.json`:
 #### ChatGPT
 
 1. Go to **Settings → Connected Apps → Add MCP Server**
-2. Enter URL: `https://mcp.templated.io/mcp?apiKey=your-api-key-here`
-3. Set Authentication to **No Auth**
+2. Enter URL: `https://mcp.templated.io/mcp`
+3. Set Authentication to **OAuth** and sign in to Templated when prompted
 4. Click Create
+
+**Alternative (automations):** enter `https://mcp.templated.io/mcp?apiKey=your-api-key-here` and set Authentication to **No Auth** instead.
 
 ### Option 2: Local Server
 
@@ -101,6 +103,13 @@ npx mcp-server-templated
 # Or install globally
 npm install -g mcp-server-templated
 ```
+
+## Authentication
+
+The remote server supports two ways to authenticate:
+
+- **OAuth 2.1** via the Templated authorization server — used automatically by interactive clients (Claude, ChatGPT, Cursor, Claude Code) when you connect to `https://mcp.templated.io/mcp` without an API key.
+- **API key** via `?apiKey=YOUR_API_KEY` on the URL or an `Authorization: Bearer YOUR_API_KEY` header — used for automations and multi-tenant scoping (`folderId`/`externalId`).
 
 ## Available Tools
 
