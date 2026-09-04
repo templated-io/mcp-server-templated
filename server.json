@@ -1,0 +1,43 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.templated-io/mcp-server-templated",
+  "title": "Templated",
+  "description": "Generate images, videos and PDFs from templates. Manage templates, folders, uploads and fonts.",
+  "repository": {
+    "url": "https://github.com/templated-io/mcp-server-templated",
+    "source": "github"
+  },
+  "websiteUrl": "https://templated.io",
+  "version": "1.6.0",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.templated.io/mcp"
+    }
+  ],
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "mcp-server-templated",
+      "version": "1.6.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "TEMPLATED_API_KEY",
+          "description": "Your Templated API key (Settings > API Key in the Templated app)",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "TEMPLATED_FOLDER_ID",
+          "description": "Optional. Restricts the server to templates inside one folder",
+          "isRequired": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

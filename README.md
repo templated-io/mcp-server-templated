@@ -42,7 +42,9 @@ Then run `/mcp` inside Claude Code and sign in when prompted.
 
 #### Cursor IDE
 
-Add to `~/.cursor/mcp.json`, then click **Login** when Cursor asks and sign in to Templated:
+[![Add to Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=templated&config=eyJ1cmwiOiJodHRwczovL21jcC50ZW1wbGF0ZWQuaW8vbWNwIn0=)
+
+Or add it manually to `~/.cursor/mcp.json`. Either way, click **Login** when Cursor asks and sign in to Templated:
 
 ```json
 {
