@@ -30,17 +30,19 @@ Use our hosted MCP server - no installation required, always up-to-date.
 
 #### Cursor IDE
 
-Add to `~/.cursor/mcp.json`:
+Add to `~/.cursor/mcp.json`, then click **Login** when Cursor asks and sign in to Templated:
 
 ```json
 {
   "mcpServers": {
     "templated": {
-      "url": "https://mcp.templated.io/mcp?apiKey=your-api-key-here"
+      "url": "https://mcp.templated.io/mcp"
     }
   }
 }
 ```
+
+For automations, use `https://mcp.templated.io/mcp?apiKey=your-api-key-here` as the URL instead.
 
 #### ChatGPT
 
