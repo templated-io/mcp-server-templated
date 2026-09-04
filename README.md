@@ -28,6 +28,18 @@ Use our hosted MCP server - no installation required, always up-to-date.
 
 **Endpoint:** `https://mcp.templated.io/mcp` (OAuth login) — or `https://mcp.templated.io/mcp?apiKey=YOUR_API_KEY` for automation
 
+#### Claude (web, desktop, mobile)
+
+Templated is listed in the Claude connectors directory: open [claude.ai/directory/templatedio](https://claude.ai/directory/templatedio) (or **Customize → Connectors** and search for Templated), click **Connect** and sign in to your Templated account. To add it as a custom connector instead, use **Settings → Connectors → Add custom connector** with `https://mcp.templated.io/mcp`.
+
+#### Claude Code
+
+```bash
+claude mcp add --transport http templated https://mcp.templated.io/mcp
+```
+
+Then run `/mcp` inside Claude Code and sign in when prompted.
+
 #### Cursor IDE
 
 Add to `~/.cursor/mcp.json`, then click **Login** when Cursor asks and sign in to Templated:
@@ -59,7 +71,7 @@ Run the MCP server locally on your machine. Requires Node.js 18+.
 
 #### Claude Desktop
 
-Claude Desktop requires running the server locally. Add to your config file:
+To run the server locally instead of using the remote connector, add to your config file:
 
 **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`  
 **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
