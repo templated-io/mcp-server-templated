@@ -147,9 +147,9 @@ The remote server supports two ways to authenticate:
 | `get_template` | Get template details |
 | `get_template_layers` | Get all layers of a template |
 | `get_template_pages` | Get pages of a multi-page template |
-| `create_template` | Create a new template |
-| `update_template` | Update an existing template |
-| `clone_template` | Clone a template |
+| `create_template` | Create a new template (single-page via `layers`, multi-page/multi-size via `pages`) |
+| `update_template` | Update an existing template (add or edit pages via `pages`) |
+| `clone_template` | Clone a template (optional new `name`) |
 | `delete_template` | Delete a template |
 | `list_template_renders` | List renders from a template |
 

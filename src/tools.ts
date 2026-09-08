@@ -6,6 +6,45 @@ import { apiRequest, validateTemplateInFolder, moveTemplateToFolder, validateTem
 // TOOL DEFINITIONS
 // =============================================================================
 
+// Layer properties accepted inside a page of the `pages` array. Unlike the
+// top-level `layers` array, a page's `layers` is an OBJECT keyed by layer name,
+// so there is no `layer` field here (the key is the name).
+const pageLayerProperties = {
+  type: { type: "string", enum: ["text", "image", "shape", "rating"], description: "Layer type" },
+  x: { type: "number" }, y: { type: "number" },
+  width: { type: "number" }, height: { type: "number" },
+  text: { type: "string" }, color: { type: "string" },
+  font_family: { type: "string" }, font_size: { type: "string", description: "CSS size with unit, e.g. '48px'" },
+  image_url: { type: "string" }, background: { type: "string" },
+  html: { type: "string", description: "SVG content for shape layers" },
+  hide: { type: "boolean" },
+};
+
+// `pages` mirrors the shape returned by get_template_pages, so a page read from
+// that tool can be edited and sent straight back.
+const pagesSchema = {
+  type: "array",
+  description:
+    "Pages for multi-page or multi-size templates (e.g. Instagram square, story and X landscape in ONE template, each with its own width/height). " +
+    "Use this INSTEAD of top-level 'layers'. Each page: 'page' (unique name), optional 'width'/'height' (fall back to the template size), " +
+    "and 'layers' as an OBJECT keyed by layer name (NOT an array). Same shape as get_template_pages returns.",
+  items: {
+    type: "object",
+    properties: {
+      page: { type: "string", description: "Unique page name (e.g. 'Insta Story', 'X Landscape')" },
+      width: { type: "number", description: "Page width in pixels (defaults to template width)" },
+      height: { type: "number", description: "Page height in pixels (defaults to template height)" },
+      hide: { type: "boolean", description: "On update_template, true REMOVES the page from the template" },
+      layers: {
+        type: "object",
+        description: "Layers keyed by layer name: { \"title\": { \"type\": \"text\", \"text\": \"Hi\", ... } }",
+        additionalProperties: { type: "object", properties: pageLayerProperties, required: ["type"] },
+      },
+    },
+    required: ["page", "layers"],
+  },
+};
+
 export const tools: Tool[] = [
   // ---------------------------------------------------------------------------
   // RENDER TOOLS
@@ -279,7 +318,7 @@ export const tools: Tool[] = [
   },
   {
     name: "create_template",
-    description: "Create a new template programmatically with layers. IMPORTANT: Each layer must have a 'layer' field (unique identifier/name), not 'name'. Valid layer types are: 'text', 'image', 'shape', 'rating'. Use 'shape' for rectangles, circles, and other shapes - shapes require an 'html' field with SVG content.",
+    description: "Create a new template programmatically with layers. IMPORTANT: Each layer must have a 'layer' field (unique identifier/name), not 'name'. Valid layer types are: 'text', 'image', 'shape', 'rating'. Use 'shape' for rectangles, circles, and other shapes - shapes require an 'html' field with SVG content. For a multi-page or multi-size template (several sizes in one template), pass 'pages' instead of 'layers': each page carries its own width/height and its layers as an object keyed by layer name.",
     annotations: {
       title: "Create Template",
       readOnlyHint: false,
@@ -393,13 +432,14 @@ export const tools: Tool[] = [
             required: ["layer", "type"],
           },
         },
+        pages: pagesSchema,
       },
       required: ["name", "width", "height"],
     },
   },
   {
     name: "update_template",
-    description: "Update an existing template. IMPORTANT: Each layer must have a 'layer' field (unique identifier), not 'name'. Valid types: 'text', 'image', 'shape', 'rating'.",
+    description: "Update an existing template. IMPORTANT: Each layer must have a 'layer' field (unique identifier), not 'name'. Valid types: 'text', 'image', 'shape', 'rating'. For multi-page templates use 'pages': a page name that does not exist yet is ADDED to the template, an existing one has its layers merged (or replaced with replaceLayers). To change page sizes on a multi-size template set width/height per page inside 'pages'; top-level width/height are rejected there because they would resize every page.",
     annotations: {
       title: "Update Template",
       readOnlyHint: false,
@@ -423,11 +463,11 @@ export const tools: Tool[] = [
         },
         width: {
           type: "number",
-          description: "New width in pixels",
+          description: "New width in pixels. Applies to every page; rejected on multi-size templates (use per-page width inside 'pages')",
         },
         height: {
           type: "number",
-          description: "New height in pixels",
+          description: "New height in pixels. Applies to every page; rejected on multi-size templates (use per-page height inside 'pages')",
         },
         background: {
           type: "string",
@@ -470,6 +510,7 @@ export const tools: Tool[] = [
           type: "boolean",
           description: "If true, replaces all layers. If false, merges with existing",
         },
+        pages: pagesSchema,
       },
       required: ["template_id"],
     },
@@ -895,6 +936,7 @@ export async function handleToolCall(
       if (args.background) body.background = args.background;
       if (args.duration) body.duration = args.duration;
       if (args.layers) body.layers = args.layers;
+      if (args.pages) body.pages = args.pages;
       const externalId = ctx.externalId;
       if (externalId) body.externalId = externalId;
       const result = await apiRequest(ctx, "POST", "/v1/template", body) as Record<string, unknown>;
@@ -910,7 +952,10 @@ export async function handleToolCall(
       if (args.description) body.description = args.description;
       if (args.width) body.width = args.width;
       if (args.height) body.height = args.height;
+      if (args.background) body.background = args.background;
+      if (args.duration) body.duration = args.duration;
       if (args.layers) body.layers = args.layers;
+      if (args.pages) body.pages = args.pages;
       const params: Record<string, string> = {};
       if (args.replaceLayers) params.replaceLayers = "true";
       return apiRequest(ctx, "PUT", `/v1/template/${args.template_id}`, body, params);
@@ -919,9 +964,9 @@ export async function handleToolCall(
     case "clone_template": {
       await validateTemplateInFolder(ctx, args.template_id as string);
       await validateTemplateByExternalId(ctx, args.template_id as string);
-      const body: Record<string, unknown> = {};
-      if (args.name) body.name = args.name;
-      const result = await apiRequest(ctx, "POST", `/v1/template/${args.template_id}/clone`, body) as Record<string, unknown>;
+      const params: Record<string, string> = {};
+      if (args.name) params.name = String(args.name);
+      const result = await apiRequest(ctx, "POST", `/v1/template/${args.template_id}/clone`, undefined, params) as Record<string, unknown>;
       await moveTemplateToFolder(ctx, result.id as string);
       // Set externalId on the clone
       const externalId = ctx.externalId;

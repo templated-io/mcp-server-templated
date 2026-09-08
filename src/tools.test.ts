@@ -48,3 +48,66 @@ test("folder scoping still applies through the context", async () => {
   }
   assert.ok(urls[0].includes("/v1/folder/fold-1/renders"));
 });
+
+// Captures every HTTP call a tool makes so tests can assert on the body/params
+// the MCP server actually forwards to the REST API.
+const captureCalls = async (
+  name: string,
+  args: Record<string, unknown>,
+  response: unknown = { id: "tpl-new" },
+) => {
+  const calls: { url: string; method: string; body: any }[] = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (url: any, init: any) => {
+    calls.push({
+      url: String(url),
+      method: init?.method ?? "GET",
+      body: init?.body ? JSON.parse(init.body) : undefined,
+    });
+    return { ok: true, text: async () => JSON.stringify(response) } as any;
+  }) as typeof fetch;
+  try {
+    await handleToolCall(ctx("k"), name, args);
+  } finally {
+    globalThis.fetch = original;
+  }
+  return calls;
+};
+
+const schemaOf = (name: string) =>
+  (tools.find((t) => t.name === name)!.inputSchema as any).properties;
+
+const pages = [
+  { page: "Square", width: 1080, height: 1080, layers: { title: { type: "text", text: "A" } } },
+  { page: "Story", width: 1080, height: 1920, layers: { title: { type: "text", text: "B" } } },
+];
+
+test("create_template declares pages and forwards it to POST /v1/template", async () => {
+  assert.ok(schemaOf("create_template").pages, "inputSchema must declare pages");
+
+  const calls = await captureCalls("create_template", { name: "t", width: 1080, height: 1080, pages });
+  const post = calls.find((c) => c.method === "POST" && c.url.endsWith("/v1/template"));
+  assert.ok(post, "must POST /v1/template");
+  assert.deepEqual(post.body.pages, pages);
+});
+
+test("update_template declares pages and forwards pages, background and duration", async () => {
+  const props = schemaOf("update_template");
+  assert.ok(props.pages, "inputSchema must declare pages");
+
+  const calls = await captureCalls("update_template", {
+    template_id: "tpl-1", pages, background: "#fff", duration: 5000,
+  });
+  const put = calls.find((c) => c.method === "PUT" && c.url.includes("/v1/template/tpl-1"));
+  assert.ok(put, "must PUT /v1/template/tpl-1");
+  assert.deepEqual(put.body.pages, pages);
+  assert.equal(put.body.background, "#fff");
+  assert.equal(put.body.duration, 5000);
+});
+
+test("clone_template sends name as a query param to the clone endpoint", async () => {
+  const calls = await captureCalls("clone_template", { template_id: "tpl-1", name: "My Clone" });
+  const post = calls.find((c) => c.method === "POST" && c.url.includes("/v1/template/tpl-1/clone"));
+  assert.ok(post, "must POST /v1/template/tpl-1/clone");
+  assert.equal(new URL(post.url).searchParams.get("name"), "My Clone");
+});
