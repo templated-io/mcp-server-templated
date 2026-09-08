@@ -50,3 +50,20 @@ test("concurrent apiRequest calls never swap keys", async () => {
   }
   assert.deepEqual(seen.sort(), ["Bearer key-A", "Bearer key-B"]);
 });
+
+test("billing and plan errors from the API are replaced by a neutral message", async () => {
+  const { describeApiError } = await import("./api.js");
+  const quota = describeApiError(403, JSON.stringify({ error: "Insufficient credits. This render requires 2 credits, but you only have 1 remaining. Upgrade your plan to generate more renders." }));
+  assert.equal(quota, "API error (403): This action is not available on the connected Templated account right now (usage limit reached or feature not enabled). Check the account at app.templated.io.");
+  assert.doesNotMatch(quota, /upgrade|credits/i);
+  assert.match(describeApiError(403, JSON.stringify({ error: "Please upgrade your account to a paid plan to upload fonts." })), /not available/);
+  assert.match(describeApiError(402, "Payment Required"), /not available/);
+});
+
+test("validation errors keep their message and Spring default bodies lose their metadata", async () => {
+  const { describeApiError } = await import("./api.js");
+  assert.equal(describeApiError(400, JSON.stringify({ error: "Layer 'title' not found" })), "API error (400): Layer 'title' not found");
+  const spring = describeApiError(415, JSON.stringify({ timestamp: "2026-09-08T16:07:24Z", status: 415, error: "Unsupported Media Type", path: "/v1/upload" }));
+  assert.equal(spring, "API error (415): Unsupported Media Type");
+  assert.equal(describeApiError(500, "boom"), "API error (500): boom");
+});

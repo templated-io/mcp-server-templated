@@ -1,6 +1,6 @@
 {
   "name": "mcp-server-templated",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "mcpName": "io.github.templated-io/mcp-server-templated",
   "description": "MCP server for Templated.io - Generate images, videos, and PDFs from templates",
   "license": "MIT",

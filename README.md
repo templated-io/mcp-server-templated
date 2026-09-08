@@ -171,13 +171,13 @@ The remote server supports two ways to authenticate:
 | `delete_upload` | Delete an upload |
 | `list_fonts` | List custom fonts |
 | `upload_font` | Upload a custom font |
-| `delete_font` | Delete a font |
+| `delete_font` | Delete a custom font by name |
 
 ### Account
 
 | Tool | Description |
 |------|-------------|
-| `get_account` | Get account info and API usage |
+| `get_account` | Get render usage for the current period |
 
 ## Example Usage
 

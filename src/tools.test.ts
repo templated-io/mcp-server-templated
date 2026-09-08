@@ -111,3 +111,61 @@ test("clone_template sends name as a query param to the clone endpoint", async (
   assert.ok(post, "must POST /v1/template/tpl-1/clone");
   assert.equal(new URL(post.url).searchParams.get("name"), "My Clone");
 });
+
+test("tool results are sanitized before reaching the model", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    text: async () => JSON.stringify({ email: "x@y.z", name: "Jane", plan: "Enterprise", apiUsage: 1, apiQuota: 10, usagePercentage: 10 }),
+  })) as any;
+  try {
+    const result = await handleToolCall(ctx("k"), "get_account", {});
+    assert.deepEqual(result, { apiUsage: 1, apiQuota: 10, usagePercentage: 10 });
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("merge_renders, delete_upload and delete_font call the endpoints the API exposes", async () => {
+  const merge = await captureCalls("merge_renders", { render_ids: ["r1", "r2"] });
+  assert.ok(merge[0].url.endsWith("/v1/render/merge"));
+  assert.deepEqual(merge[0].body, { ids: ["r1", "r2"], host: true });
+
+  const del = await captureCalls("delete_upload", { upload_id: "up-1" });
+  assert.equal(del[0].method, "DELETE");
+  assert.ok(del[0].url.endsWith("/v1/uploads?ids=up-1"));
+
+  const font = await captureCalls("delete_font", { font_name: "My Font" });
+  assert.equal(font[0].method, "DELETE");
+  assert.ok(font[0].url.endsWith("/v1/fonts?fonts=My+Font"));
+  assert.ok(schemaOf("delete_font").font_name, "delete_font takes the font name");
+});
+
+test("create_upload and upload_font fetch the URL and post it as multipart", async () => {
+  const calls: { url: string; form?: FormData }[] = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (url: any, init: any) => {
+    calls.push({ url: String(url), form: init?.body instanceof FormData ? init.body : undefined });
+    if (String(url).startsWith("https://93.184.216.34/")) {
+      return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "font/woff2" } });
+    }
+    return { ok: true, text: async () => JSON.stringify({ id: "up-1", name: "logo.png", userId: "u" }) } as any;
+  }) as typeof fetch;
+  try {
+    const upload = await handleToolCall({ apiKey: "k", folderId: null, externalId: "cust-9" }, "create_upload", {
+      url: "https://93.184.216.34/logo.png", name: "brand",
+    });
+    assert.deepEqual(upload, { id: "up-1", name: "logo.png" });
+    const post = calls.find((c) => c.url.endsWith("/v1/upload"));
+    assert.ok(post?.form, "must POST multipart to /v1/upload");
+    assert.equal((post!.form!.get("file") as File).name, "brand.png");
+    assert.equal(post!.form!.get("externalId"), "cust-9");
+
+    calls.length = 0;
+    await handleToolCall(ctx("k"), "upload_font", { url: "https://93.184.216.34/download?id=7", name: "Inter" });
+    const fontPost = calls.find((c) => c.url.endsWith("/v1/font"));
+    assert.equal((fontPost!.form!.get("file") as File).name, "Inter.woff2");
+  } finally {
+    globalThis.fetch = original;
+  }
+});

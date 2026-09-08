@@ -65,7 +65,8 @@ test("concurrent tool calls with different keys stay isolated end to end", async
   (globalThis as any).fetch = async (url: any, init?: any) => {
     if (String(url).includes("api.templated.io")) {
       const auth = init.headers["Authorization"];
-      return { ok: true, status: 200, text: async () => JSON.stringify({ sawKey: auth }) } as any;
+      // apiUsage survives the response sanitizer, so the key can be read back from the tool result.
+      return { ok: true, status: 200, text: async () => JSON.stringify({ apiUsage: auth }) } as any;
     }
     return upstream(url, init);
   };

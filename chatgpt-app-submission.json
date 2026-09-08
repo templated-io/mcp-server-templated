@@ -1,0 +1,280 @@
+{
+  "$schema": "https://developers.openai.com/plugins/schemas/chatgpt-app-submission.v1.json",
+  "schema_version": 1,
+  "app_info": {
+    "display_name": "Templated",
+    "subtitle": "Generate images, videos & PDFs",
+    "description": "Templated is an API and drag-and-drop editor for generating images, videos and PDFs from reusable templates. Design a template once (or import it from Canva), then let ChatGPT render it with new text, images and colors on demand.\n\nWith this app ChatGPT can:\n- Render images (PNG, JPG, WebP), multi-page PDFs and MP4 videos from any of your templates by changing layer values\n- Browse, search and inspect your templates, layers and pages to know what can be customized\n- Create, update, clone and organize templates and folders\n- Upload images and fonts from URLs and manage your assets\n- Merge PDF renders and check your account usage\n\nRenders are produced by Templated's rendering engine from templates you designed, so the output is consistent, on-brand and ready to use in marketing, e-commerce, social media, documents and automations. Sign in with your Templated account when connecting.",
+    "category": "DESIGN"
+  },
+  "tools": {
+    "create_render": {
+      "annotations": { "readOnlyHint": false, "openWorldHint": true, "destructiveHint": false },
+      "justifications": {
+        "read_only_justification": "Creates a new render (image, PDF or video) in the user's Templated account, so it writes a new record and a new output file.",
+        "open_world_justification": "Layer values may include image URLs that Templated fetches from the open web to compose the output, so the tool can reach hosts outside Templated.",
+        "destructive_justification": "Only adds a new render; the template and any existing renders are left untouched."
+      }
+    },
+    "get_render": {
+      "annotations": { "readOnlyHint": true, "openWorldHint": false, "destructiveHint": false },
+      "justifications": {
+        "read_only_justification": "Fetches the status and file URL of one render already stored in the account and writes nothing.",
+        "open_world_justification": "Reads a single record from the user's own Templated account and contacts no external system.",
+        "destructive_justification": "Viewing a render changes nothing."
+      }
+    },
+    "list_renders": {
+      "annotations": { "readOnlyHint": true, "openWorldHint": false, "destructiveHint": false },
+      "justifications": {
+        "read_only_justification": "Lists renders already stored in the account, paginated, without modifying them.",
+        "open_world_justification": "Queries only the user's own account data inside Templated.",
+        "destructive_justification": "Listing renders does not alter or remove any of them."
+      }
+    },
+    "delete_render": {
+      "annotations": { "readOnlyHint": false, "openWorldHint": false, "destructiveHint": true },
+      "justifications": {
+        "read_only_justification": "Removes a render record and its output file from the account.",
+        "open_world_justification": "Acts on one record inside the user's own Templated account and reaches no third party.",
+        "destructive_justification": "The render and its file are permanently deleted and cannot be recovered."
+      }
+    },
+    "merge_renders": {
+      "annotations": { "readOnlyHint": false, "openWorldHint": false, "destructiveHint": false },
+      "justifications": {
+        "read_only_justification": "Produces a new combined PDF from existing PDF renders, so it creates a new file and record.",
+        "open_world_justification": "Works only with renders already stored in the user's account; no external URL is fetched.",
+        "destructive_justification": "The source renders are kept as they are; only a new merged PDF is added."
+      }
+    },
+    "list_templates": {
+      "annotations": { "readOnlyHint": true, "openWorldHint": false, "destructiveHint": false },
+      "justifications": {
+        "read_only_justification": "Lists and searches the templates in the account without changing them.",
+        "open_world_justification": "Reads the user's own template list inside Templated and contacts no external service.",
+        "destructive_justification": "Listing templates changes nothing."
+      }
+    },
+    "get_template": {
+      "annotations": { "readOnlyHint": true, "openWorldHint": false, "destructiveHint": false },
+      "justifications": {
+        "read_only_justification": "Returns the details (name, size, thumbnail) of one template and writes nothing.",
+        "open_world_justification": "Reads a single template record from the user's own account.",
+        "destructive_justification": "Viewing a template leaves it untouched."
+      }
+    },
+    "get_template_layers": {
+      "annotations": { "readOnlyHint": true, "openWorldHint": false, "destructiveHint": false },
+      "justifications": {
+        "read_only_justification": "Returns the layers of a template so the model knows what can be customized; nothing is written.",
+        "open_world_justification": "Reads template data stored in the user's own account only.",
+        "destructive_justification": "Inspecting layers does not modify the template."
+      }
+    },
+    "get_template_pages": {
+      "annotations": { "readOnlyHint": true, "openWorldHint": false, "destructiveHint": false },
+      "justifications": {
+        "read_only_justification": "Returns the pages and layers of a multi-page template without modifying it.",
+        "open_world_justification": "Reads template data stored in the user's own account only.",
+        "destructive_justification": "Inspecting pages does not modify the template."
+      }
+    },
+    "create_template": {
+      "annotations": { "readOnlyHint": false, "openWorldHint": true, "destructiveHint": false },
+      "justifications": {
+        "read_only_justification": "Creates a new template with the layers or pages provided, so it writes a new record.",
+        "open_world_justification": "Image layers may reference URLs that Templated fetches from the open web when the template is built or rendered.",
+        "destructive_justification": "Only adds a new template; existing templates are not changed."
+      }
+    },
+    "update_template": {
+      "annotations": { "readOnlyHint": false, "openWorldHint": true, "destructiveHint": true },
+      "justifications": {
+        "read_only_justification": "Modifies an existing template's name, size, layers or pages.",
+        "open_world_justification": "Updated image layers may reference URLs that Templated fetches from the open web.",
+        "destructive_justification": "Overwrites the template's previous layers or pages, and a page marked hidden is removed, so earlier content is lost."
+      }
+    },
+    "clone_template": {
+      "annotations": { "readOnlyHint": false, "openWorldHint": false, "destructiveHint": false },
+      "justifications": {
+        "read_only_justification": "Creates a copy of an existing template, which is a new record in the account.",
+        "open_world_justification": "Copies data already stored in the user's account; no external system is contacted.",
+        "destructive_justification": "The original template is not modified; only a copy is added."
+      }
+    },
+    "delete_template": {
+      "annotations": { "readOnlyHint": false, "openWorldHint": false, "destructiveHint": true },
+      "justifications": {
+        "read_only_justification": "Removes a template from the account.",
+        "open_world_justification": "Acts on one record inside the user's own account and reaches no third party.",
+        "destructive_justification": "The template is permanently deleted and cannot be recovered."
+      }
+    },
+    "list_template_renders": {
+      "annotations": { "readOnlyHint": true, "openWorldHint": false, "destructiveHint": false },
+      "justifications": {
+        "read_only_justification": "Lists the renders previously generated from one template without changing them.",
+        "open_world_justification": "Reads the user's own render history inside Templated only.",
+        "destructive_justification": "Listing renders does not alter or remove any of them."
+      }
+    },
+    "list_folders": {
+      "annotations": { "readOnlyHint": true, "openWorldHint": false, "destructiveHint": false },
+      "justifications": {
+        "read_only_justification": "Lists the folders used to organize templates and writes nothing.",
+        "open_world_justification": "Reads the user's own account data only.",
+        "destructive_justification": "Listing folders changes nothing."
+      }
+    },
+    "create_folder": {
+      "annotations": { "readOnlyHint": false, "openWorldHint": false, "destructiveHint": false },
+      "justifications": {
+        "read_only_justification": "Creates a new, empty folder in the account.",
+        "open_world_justification": "Writes a record inside the user's own account; no external system is involved.",
+        "destructive_justification": "Adding a folder does not affect existing folders or templates."
+      }
+    },
+    "update_folder": {
+      "annotations": { "readOnlyHint": false, "openWorldHint": false, "destructiveHint": true },
+      "justifications": {
+        "read_only_justification": "Renames an existing folder.",
+        "open_world_justification": "Modifies one record inside the user's own account only.",
+        "destructive_justification": "The previous folder name is overwritten."
+      }
+    },
+    "delete_folder": {
+      "annotations": { "readOnlyHint": false, "openWorldHint": false, "destructiveHint": true },
+      "justifications": {
+        "read_only_justification": "Removes a folder from the account.",
+        "open_world_justification": "Acts on one record inside the user's own account and reaches no third party.",
+        "destructive_justification": "The folder is permanently deleted."
+      }
+    },
+    "list_uploads": {
+      "annotations": { "readOnlyHint": true, "openWorldHint": false, "destructiveHint": false },
+      "justifications": {
+        "read_only_justification": "Lists the images previously uploaded to the account without changing them.",
+        "open_world_justification": "Reads the user's own asset list inside Templated only.",
+        "destructive_justification": "Listing uploads changes nothing."
+      }
+    },
+    "create_upload": {
+      "annotations": { "readOnlyHint": false, "openWorldHint": true, "destructiveHint": false },
+      "justifications": {
+        "read_only_justification": "Stores a new image in the account's asset library.",
+        "open_world_justification": "Templated downloads the file from the URL the user provides, which can be any host on the open web.",
+        "destructive_justification": "Only adds a new asset; existing uploads are not changed."
+      }
+    },
+    "delete_upload": {
+      "annotations": { "readOnlyHint": false, "openWorldHint": false, "destructiveHint": true },
+      "justifications": {
+        "read_only_justification": "Removes an uploaded image from the account.",
+        "open_world_justification": "Acts on one record inside the user's own account and reaches no third party.",
+        "destructive_justification": "The uploaded file is permanently deleted and cannot be recovered."
+      }
+    },
+    "list_fonts": {
+      "annotations": { "readOnlyHint": true, "openWorldHint": false, "destructiveHint": false },
+      "justifications": {
+        "read_only_justification": "Lists the custom fonts in the account without changing them.",
+        "open_world_justification": "Reads the user's own font list inside Templated only.",
+        "destructive_justification": "Listing fonts changes nothing."
+      }
+    },
+    "upload_font": {
+      "annotations": { "readOnlyHint": false, "openWorldHint": true, "destructiveHint": false },
+      "justifications": {
+        "read_only_justification": "Stores a new custom font in the account.",
+        "open_world_justification": "Templated downloads the font file from the URL the user provides, which can be any host on the open web.",
+        "destructive_justification": "Only adds a new font; existing fonts are not changed."
+      }
+    },
+    "delete_font": {
+      "annotations": { "readOnlyHint": false, "openWorldHint": false, "destructiveHint": true },
+      "justifications": {
+        "read_only_justification": "Removes a custom font from the account.",
+        "open_world_justification": "Acts on one record inside the user's own account and reaches no third party.",
+        "destructive_justification": "The font is permanently deleted and cannot be recovered."
+      }
+    },
+    "get_account": {
+      "annotations": { "readOnlyHint": true, "openWorldHint": false, "destructiveHint": false },
+      "justifications": {
+        "read_only_justification": "Returns the connected account's render usage for the current period and writes nothing.",
+        "open_world_justification": "Reads the user's own account record inside Templated only.",
+        "destructive_justification": "Viewing usage changes nothing."
+      }
+    }
+  },
+  "test_cases": [
+    {
+      "description": "Browse the templates in the connected account.",
+      "user_prompt": "List my Templated templates.",
+      "file_attachment_urls": null,
+      "tools_triggered": "list_templates",
+      "expected_output": "A list of the account's templates with name, size (width x height) and a thumbnail link for each.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Inspect a template to learn what can be customized.",
+      "user_prompt": "What can I customize in my first template?",
+      "file_attachment_urls": null,
+      "tools_triggered": "list_templates, get_template_layers",
+      "expected_output": "The layers of the template (name and type for each, such as text or image) with their current values, explained as what can be changed in a render.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Render an image from a template with new text.",
+      "user_prompt": "Create an image from my first template and change the main title text to 'Summer Sale'.",
+      "file_attachment_urls": null,
+      "tools_triggered": "list_templates, get_template_layers, create_render",
+      "expected_output": "A completed render with a link to the generated image (JPG by default) showing the template with the title replaced by 'Summer Sale'.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Render a PDF from a template.",
+      "user_prompt": "Generate a PDF from my first template with the title 'Jane Doe'.",
+      "file_attachment_urls": null,
+      "tools_triggered": "list_templates, get_template_layers, create_render",
+      "expected_output": "A completed render with a link to the generated PDF file.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Create a new template from scratch.",
+      "user_prompt": "Create a new 1080x1080 template called 'Quote card' with a dark background and a white text layer named 'quote' that says 'Stay curious'.",
+      "file_attachment_urls": null,
+      "tools_triggered": "create_template",
+      "expected_output": "Confirmation that the template was created, with its ID and a link to open it in the Templated editor.",
+      "expected_output_url": null
+    }
+  ],
+  "negative_test_cases": [
+    {
+      "description": "Do not trigger for AI image generation, since Templated only renders templates the user already designed.",
+      "user_prompt": "Generate a picture of a cat wearing sunglasses on a beach.",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "ChatGPT handles this with its own image generation; the Templated app is not invoked.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Do not trigger for photo editing, which Templated does not do.",
+      "user_prompt": "Remove the background from this photo and make it brighter.",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "The app should not be invoked; Templated cannot edit an arbitrary photo, only render templates.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Do not trigger for publishing to social networks, which is outside the app's scope.",
+      "user_prompt": "Post this image to my Instagram account.",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "The app should not be invoked; Templated has no tool to publish to social networks.",
+      "expected_output_url": null
+    }
+  ]
+}

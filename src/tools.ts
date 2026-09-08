@@ -1,6 +1,8 @@
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestContext } from "./context.js";
-import { apiRequest, validateTemplateInFolder, moveTemplateToFolder, validateTemplateByExternalId } from "./api.js";
+import { apiRequest, apiUpload, validateTemplateInFolder, moveTemplateToFolder, validateTemplateByExternalId } from "./api.js";
+import { fetchRemoteFile } from "./remote.js";
+import { sanitizeToolResult } from "./sanitize.js";
 
 // =============================================================================
 // TOOL DEFINITIONS
@@ -128,7 +130,7 @@ export const tools: Tool[] = [
       title: "Get Render",
       readOnlyHint: true,
       destructiveHint: false,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     inputSchema: {
       type: "object",
@@ -148,7 +150,7 @@ export const tools: Tool[] = [
       title: "List Renders",
       readOnlyHint: true,
       destructiveHint: false,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     inputSchema: {
       type: "object",
@@ -171,7 +173,7 @@ export const tools: Tool[] = [
       title: "Delete Render",
       readOnlyHint: false,
       destructiveHint: true,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     inputSchema: {
       type: "object",
@@ -191,7 +193,7 @@ export const tools: Tool[] = [
       title: "Merge Renders into PDF",
       readOnlyHint: false,
       destructiveHint: false,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     inputSchema: {
       type: "object",
@@ -220,7 +222,7 @@ export const tools: Tool[] = [
       title: "List Templates",
       readOnlyHint: true,
       destructiveHint: false,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     inputSchema: {
       type: "object",
@@ -263,7 +265,7 @@ export const tools: Tool[] = [
       title: "Get Template",
       readOnlyHint: true,
       destructiveHint: false,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     inputSchema: {
       type: "object",
@@ -283,7 +285,7 @@ export const tools: Tool[] = [
       title: "Get Template Layers",
       readOnlyHint: true,
       destructiveHint: false,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     inputSchema: {
       type: "object",
@@ -303,7 +305,7 @@ export const tools: Tool[] = [
       title: "Get Template Pages",
       readOnlyHint: true,
       destructiveHint: false,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     inputSchema: {
       type: "object",
@@ -522,7 +524,7 @@ export const tools: Tool[] = [
       title: "Clone Template",
       readOnlyHint: false,
       destructiveHint: false,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     inputSchema: {
       type: "object",
@@ -546,7 +548,7 @@ export const tools: Tool[] = [
       title: "Delete Template",
       readOnlyHint: false,
       destructiveHint: true,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     inputSchema: {
       type: "object",
@@ -566,7 +568,7 @@ export const tools: Tool[] = [
       title: "List Renders from Template",
       readOnlyHint: true,
       destructiveHint: false,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     inputSchema: {
       type: "object",
@@ -598,7 +600,7 @@ export const tools: Tool[] = [
       title: "List Folders",
       readOnlyHint: true,
       destructiveHint: false,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     inputSchema: {
       type: "object",
@@ -621,7 +623,7 @@ export const tools: Tool[] = [
       title: "Create Folder",
       readOnlyHint: false,
       destructiveHint: false,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     inputSchema: {
       type: "object",
@@ -641,7 +643,7 @@ export const tools: Tool[] = [
       title: "Update Folder",
       readOnlyHint: false,
       destructiveHint: true,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     inputSchema: {
       type: "object",
@@ -665,7 +667,7 @@ export const tools: Tool[] = [
       title: "Delete Folder",
       readOnlyHint: false,
       destructiveHint: true,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     inputSchema: {
       type: "object",
@@ -689,7 +691,7 @@ export const tools: Tool[] = [
       title: "List Uploads",
       readOnlyHint: true,
       destructiveHint: false,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     inputSchema: {
       type: "object",
@@ -736,7 +738,7 @@ export const tools: Tool[] = [
       title: "Delete Upload",
       readOnlyHint: false,
       destructiveHint: true,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     inputSchema: {
       type: "object",
@@ -760,7 +762,7 @@ export const tools: Tool[] = [
       title: "List Fonts",
       readOnlyHint: true,
       destructiveHint: false,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     inputSchema: {
       type: "object",
@@ -807,17 +809,17 @@ export const tools: Tool[] = [
       title: "Delete Font",
       readOnlyHint: false,
       destructiveHint: true,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     inputSchema: {
       type: "object",
       properties: {
-        font_id: {
+        font_name: {
           type: "string",
-          description: "The font ID to delete",
+          description: "The font family name to delete, as returned by list_fonts",
         },
       },
-      required: ["font_id"],
+      required: ["font_name"],
     },
   },
 
@@ -826,12 +828,12 @@ export const tools: Tool[] = [
   // ---------------------------------------------------------------------------
   {
     name: "get_account",
-    description: "Get account information including API usage and quota",
+    description: "Get the connected account's render usage for the current period (renders used and renders included)",
     annotations: {
       title: "Get Account Info",
       readOnlyHint: true,
       destructiveHint: false,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     inputSchema: {
       type: "object",
@@ -845,6 +847,20 @@ export const tools: Tool[] = [
 // =============================================================================
 
 export async function handleToolCall(
+  ctx: RequestContext,
+  name: string,
+  args: Record<string, unknown>
+): Promise<unknown> {
+  return sanitizeToolResult(name, await executeToolCall(ctx, name, args));
+}
+
+const FONT_EXTENSIONS = ["ttf", "otf", "woff", "woff2"];
+const FONT_MIME_EXTENSIONS: Record<string, string> = {
+  "font/ttf": "ttf", "font/otf": "otf", "font/woff": "woff", "font/woff2": "woff2",
+  "application/x-font-ttf": "ttf", "application/x-font-opentype": "otf", "application/font-woff": "woff",
+};
+
+async function executeToolCall(
   ctx: RequestContext,
   name: string,
   args: Record<string, unknown>
@@ -890,7 +906,7 @@ export async function handleToolCall(
       return apiRequest(ctx, "DELETE", `/v1/render/${args.render_id}`);
 
     case "merge_renders":
-      return apiRequest(ctx, "POST", "/v1/renders/merge", {
+      return apiRequest(ctx, "POST", "/v1/render/merge", {
         ids: args.render_ids,
         host: args.host ?? true,
       });
@@ -1016,13 +1032,20 @@ export async function handleToolCall(
     }
 
     case "create_upload": {
-      const body: Record<string, unknown> = { url: args.url };
-      if (args.name) body.name = args.name;
-      return apiRequest(ctx, "POST", "/v1/upload", body);
+      // The API only accepts multipart uploads, so the file is fetched here first.
+      const file = await fetchRemoteFile(String(args.url));
+      if (args.name) {
+        const ext = file.filename.includes(".") ? file.filename.slice(file.filename.lastIndexOf(".")) : "";
+        const name = String(args.name);
+        file.filename = name.includes(".") ? name : `${name}${ext}`;
+      }
+      const fields: Record<string, string> = {};
+      if (ctx.externalId) fields.externalId = ctx.externalId;
+      return apiUpload(ctx, "/v1/upload", file, fields);
     }
 
     case "delete_upload":
-      return apiRequest(ctx, "DELETE", `/v1/upload/${args.upload_id}`);
+      return apiRequest(ctx, "DELETE", "/v1/uploads", undefined, { ids: String(args.upload_id) });
 
     // FONT HANDLERS
     case "list_fonts": {
@@ -1032,14 +1055,20 @@ export async function handleToolCall(
       return apiRequest(ctx, "GET", "/v1/fonts", undefined, params);
     }
 
-    case "upload_font":
-      return apiRequest(ctx, "POST", "/v1/font", {
-        url: args.url,
-        name: args.name,
-      });
+    case "upload_font": {
+      const file = await fetchRemoteFile(String(args.url));
+      // The API derives the family name and the format check from the filename.
+      const urlExt = file.filename.includes(".") ? file.filename.slice(file.filename.lastIndexOf(".") + 1).toLowerCase() : "";
+      const ext = FONT_EXTENSIONS.includes(urlExt) ? urlExt : FONT_MIME_EXTENSIONS[file.contentType];
+      if (!ext) {
+        throw new Error("The URL must point to a TTF, OTF, WOFF or WOFF2 font file");
+      }
+      file.filename = `${String(args.name).trim() || "font"}.${ext}`;
+      return apiUpload(ctx, "/v1/font", file);
+    }
 
     case "delete_font":
-      return apiRequest(ctx, "DELETE", `/v1/font/${args.font_id}`);
+      return apiRequest(ctx, "DELETE", "/v1/fonts", undefined, { fonts: String(args.font_name) });
 
     // ACCOUNT HANDLERS
     case "get_account":

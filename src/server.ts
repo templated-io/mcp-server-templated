@@ -5,7 +5,7 @@ import { tools, handleToolCall } from "./tools.js";
 
 export function createServer(ctx: RequestContext): Server {
   const mcpServer = new Server(
-    { name: "mcp-server-templated", version: "1.6.0" },
+    { name: "mcp-server-templated", version: "1.7.1" },
     { capabilities: { tools: {} } }
   );
 
