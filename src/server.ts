@@ -1,12 +1,24 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolRequestSchema,
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import type { RequestContext } from "./context.js";
 import { tools, handleToolCall } from "./tools.js";
+import { prompts, getPrompt, SERVER_INSTRUCTIONS } from "./prompts.js";
 
 export function createServer(ctx: RequestContext): Server {
   const mcpServer = new Server(
-    { name: "mcp-server-templated", version: "1.7.1" },
-    { capabilities: { tools: {} } }
+    { name: "mcp-server-templated", version: "1.8.0" },
+    { capabilities: { tools: {}, prompts: {} }, instructions: SERVER_INSTRUCTIONS }
+  );
+
+  mcpServer.setRequestHandler(ListPromptsRequestSchema, async () => ({ prompts }));
+
+  mcpServer.setRequestHandler(GetPromptRequestSchema, async (request) =>
+    getPrompt(request.params.name, request.params.arguments ?? {})
   );
 
   mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
