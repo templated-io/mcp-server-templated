@@ -5,17 +5,22 @@ import { createServer } from "./server.js";
 import { loadConfig, McpConfig } from "./config.js";
 import { extractToken, wwwAuthenticate, TokenValidator } from "./auth.js";
 import { protectedResourceMetadata, AuthServerMetadataProxy } from "./wellKnown.js";
+import { clean, ClientRegistry, connectionKey, initializeClientInfo, logToolCall, ToolCallLogger } from "./usage.js";
 
 export interface HttpServerOptions {
   config?: McpConfig;
   validator?: TokenValidator;
   asMetadataProxy?: AuthServerMetadataProxy;
+  clients?: ClientRegistry;
+  logToolCall?: ToolCallLogger;
 }
 
 export function createHttpServer(opts: HttpServerOptions = {}): http.Server {
   const cfg = opts.config ?? loadConfig();
   const validator = opts.validator ?? new TokenValidator({ apiBaseUrl: cfg.apiBaseUrl });
   const asProxy = opts.asMetadataProxy ?? new AuthServerMetadataProxy({ apiBaseUrl: cfg.apiBaseUrl });
+  const clients = opts.clients ?? new ClientRegistry();
+  const onToolCall = opts.logToolCall ?? logToolCall;
 
   return http.createServer(async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -96,15 +101,27 @@ export function createHttpServer(opts: HttpServerOptions = {}): http.Server {
         return;
       }
       const ctx = contextFromRequest(url, token);
+      const userAgent = clean(req.headers["user-agent"]);
+      const key = connectionKey(token, userAgent);
 
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-      const server = createServer(ctx);
+      const server = createServer(ctx, {
+        onToolCall, clientInfo: () => clients.lookup(key), userAgent, publicUrl: cfg.publicUrl, appUrl: cfg.appUrl,
+      });
       res.on("close", () => {
         transport.close();
         server.close();
       });
       try {
         await server.connect(transport);
+        // Stateless mode: tool calls arrive in later requests, so keep what the
+        // initialize request said about the client for their log lines.
+        const deliver = transport.onmessage;
+        transport.onmessage = (message, extra) => {
+          const info = initializeClientInfo(message);
+          if (info) clients.remember(key, info);
+          deliver?.(message, extra);
+        };
         await transport.handleRequest(req, res);
       } catch (error) {
         console.error("Error handling MCP request:", error);

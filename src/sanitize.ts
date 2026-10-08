@@ -54,7 +54,31 @@ function renders(value: unknown): unknown {
   return pick(value, RENDER_FIELDS);
 }
 
+const isEmpty = (value: unknown): boolean =>
+  value === null || value === undefined || value === "" ||
+  (Array.isArray(value) && value.length === 0) ||
+  (isObject(value) && Object.keys(value).length === 0);
+
+// The API serializes every unset field (a layer has about 68, most of them null),
+// which costs tokens without telling the model anything. Drops null, undefined,
+// empty strings, empty arrays and objects left empty, at any depth. 0 and false
+// are values and stay; array items keep their positions.
+export function prune(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(prune);
+  if (!isObject(value)) return value;
+  const out: Json = {};
+  for (const [key, item] of Object.entries(value)) {
+    const pruned = prune(item);
+    if (!isEmpty(pruned)) out[key] = pruned;
+  }
+  return out;
+}
+
 export function sanitizeToolResult(toolName: string, result: unknown): unknown {
+  return prune(allowlist(toolName, result));
+}
+
+function allowlist(toolName: string, result: unknown): unknown {
   switch (toolName) {
     case "create_render":
     case "get_render":

@@ -179,6 +179,17 @@ The remote server supports two ways to authenticate:
 |------|-------------|
 | `get_account` | Get render usage for the current period |
 
+## In-chat render preview
+
+In hosts that support [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) (Claude on web, desktop and mobile, ChatGPT, VS Code and others), `create_render` and `get_render` show their result as a preview card inside the conversation:
+
+- **Images** (PNG, JPG, WebP) appear fitted to the card; **MP4** renders get a video player; **PDFs** show as a file tile.
+- Multi-page templates show their pages as a grid (a list for PDFs).
+- Each card has **Download** and **Open in editor** buttons, and follows the host's light or dark theme.
+- A render that is still processing shows a waiting state and updates itself when the file is ready.
+
+The card is the UI resource `ui://templated/render-card-v1.html`, one self-contained HTML file (about 21 KB) that loads nothing except the render files from `cdn.templated.media` and `templated-assets.s3.amazonaws.com`. Clients without MCP Apps support (Cursor, Claude Code, scripts) get the same JSON text result as before, plus `structuredContent` with the render's URL, format, size and status.
+
 ## Example Usage
 
 Once configured, you can ask your AI assistant to:
@@ -224,8 +235,11 @@ cd mcp-server-templated
 # Install dependencies
 npm install
 
-# Build
+# Build (the server, then the preview card into dist/ui/render-card.html)
 npm run build
+
+# Test
+npm test
 
 # Run in stdio mode (for local MCP clients)
 TEMPLATED_API_KEY=your-key node dist/index.js

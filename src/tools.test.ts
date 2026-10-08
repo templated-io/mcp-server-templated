@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { tools, handleToolCall } from "./tools.js";
+import { tools, handleToolCall, ToolContent, MAX_INLINE_PDF_BYTES } from "./tools.js";
+import { SERVER_INSTRUCTIONS } from "./prompts.js";
 import type { RequestContext } from "./context.js";
 
 const ctx = (apiKey: string, folderId: string | null = null): RequestContext =>
@@ -167,5 +168,293 @@ test("create_upload and upload_font fetch the URL and post it as multipart", asy
     assert.equal((fontPost!.form!.get("file") as File).name, "Inter.woff2");
   } finally {
     globalThis.fetch = original;
+  }
+});
+
+// Routes each API call to a handler so a test can answer several endpoints.
+type Call = { url: URL; method: string; body: any };
+const withApi = async <T>(
+  route: (call: Call) => Response | unknown,
+  fn: (calls: Call[]) => Promise<T>,
+): Promise<T> => {
+  const calls: Call[] = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (url: any, init: any) => {
+    const call = { url: new URL(String(url)), method: init?.method ?? "GET", body: init?.body ? JSON.parse(init.body) : undefined };
+    calls.push(call);
+    const answer = route(call);
+    return answer instanceof Response ? answer : new Response(JSON.stringify(answer), { status: 200 });
+  }) as typeof fetch;
+  try {
+    return await fn(calls);
+  } finally {
+    globalThis.fetch = original;
+  }
+};
+const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
+
+test("IDs are encoded into API paths so they cannot reach other endpoints", async () => {
+  const calls = await captureCalls("delete_render", { render_id: "../template/X" }, {});
+  assert.equal(calls.length, 1);
+  assert.equal(new URL(calls[0].url).pathname, "/v1/render/..%2Ftemplate%2FX");
+
+  const idTools: [string, Record<string, unknown>][] = [
+    ["get_render", { render_id: "a/b" }], ["get_template", { template_id: "a/b" }],
+    ["get_template_layers", { template_id: "a/b" }], ["get_template_pages", { template_id: "a/b" }],
+    ["update_template", { template_id: "a/b", name: "x" }], ["clone_template", { template_id: "a/b" }],
+    ["delete_template", { template_id: "a/b" }], ["list_template_renders", { template_id: "a/b" }],
+    ["update_folder", { folder_id: "a/b", name: "x" }], ["delete_folder", { folder_id: "a/b" }],
+  ];
+  for (const [name, args] of idTools) {
+    const [call] = await captureCalls(name, args, { id: "c1" });
+    assert.ok(call.url.includes("a%2Fb") && !call.url.includes("/a/b"), `${name}: ${call.url}`);
+  }
+
+  // "." and ".." survive encodeURIComponent and would be resolved as path segments
+  for (const id of ["..", "."]) {
+    const dots = await captureCalls("get_template", { template_id: id }).catch((e: Error) => e);
+    assert.ok(dots instanceof Error && /template_id/.test(dots.message), `${id} must be rejected`);
+  }
+});
+
+test("missing required parameters are reported before any API call", async () => {
+  await withApi(() => ({}), async (calls) => {
+    await assert.rejects(() => handleToolCall(ctx("k"), "get_template", {}), /Missing required parameter "template_id".*list_templates/);
+    await assert.rejects(() => handleToolCall(ctx("k"), "merge_renders", { render_ids: [] }), /"render_ids".*list_renders/);
+    await assert.rejects(() => handleToolCall(ctx("k"), "create_render", undefined as any), /"template"/);
+    assert.equal(calls.length, 0);
+  });
+});
+
+test("API errors name the resource and the tool that lists valid IDs", async () => {
+  await withApi(() => json(404, { status: 404, error: "Not Found" }), async () => {
+    await assert.rejects(
+      () => handleToolCall(ctx("k"), "get_template", { template_id: "nope" }),
+      /Template nope not found in the connected Templated account \(HTTP 404\)\. Call list_templates/,
+    );
+    await assert.rejects(() => handleToolCall(ctx("k"), "get_render", { render_id: "r-x" }), /Render r-x not found.*list_renders/);
+  });
+});
+
+const layersOf = [
+  { layer: "title", type: "text", locked: false },
+  { layer: "subtitle", type: "text", locked: false },
+  { layer: "photo", type: "image", locked: false, group: "hero" },
+  { layer: "logo", type: "image", locked: true },
+];
+
+test("create_render rejects unknown layer names with the valid ones and renders nothing", async () => {
+  await withApi((call) => (call.url.pathname.endsWith("/layers") ? layersOf : { id: "r1" }), async (calls) => {
+    await assert.rejects(
+      () => handleToolCall(ctx("k"), "create_render", {
+        template: "tpl-1", layers: { titulo: { text: "Oi" }, Photo: { image_url: "https://x/y.png" }, title: { text: "ok" } },
+      }),
+      (error: Error) => {
+        assert.match(error.message, /"titulo"/);
+        assert.match(error.message, /"Photo" \(did you mean "photo"\?\)/);
+        assert.match(error.message, /Nothing was rendered/);
+        assert.match(error.message, /Valid layer names: title, subtitle, photo\./);
+        assert.doesNotMatch(error.message, /logo/, "locked layers are not offered");
+        return true;
+      },
+    );
+    const layersCall = calls.find((c) => c.url.pathname === "/v1/template/tpl-1/layers");
+    assert.equal(layersCall?.url.searchParams.get("includeLockedLayers"), "true");
+    assert.ok(!calls.some((c) => c.url.pathname === "/v1/render"), "must not render");
+  });
+});
+
+test("create_render accepts locked layers and group names, and renders", async () => {
+  await withApi((call) => (call.url.pathname.endsWith("/layers") ? layersOf : { id: "r1", url: "https://cdn/r1.jpg" }), async (calls) => {
+    const result = await handleToolCall(ctx("k"), "create_render", {
+      template: "tpl-1", layers: { title: { text: "Hi" }, logo: { hide: true }, hero: { hide: false } },
+    });
+    assert.deepEqual(result, { id: "r1", url: "https://cdn/r1.jpg" });
+    const render = calls.find((c) => c.url.pathname === "/v1/render");
+    assert.deepEqual(render?.body.layers, { title: { text: "Hi" }, logo: { hide: true }, hero: { hide: false } });
+  });
+});
+
+test("create_render still renders when the layer lookup itself fails", async () => {
+  await withApi((call) => (call.url.pathname.endsWith("/layers") ? json(500, { error: "Internal Server Error" }) : { id: "r1" }), async (calls) => {
+    await handleToolCall(ctx("k"), "create_render", { template: "tpl-1", layers: { anything: { text: "x" } } });
+    assert.ok(calls.some((c) => c.url.pathname === "/v1/render"));
+  });
+});
+
+const pagesOf = [
+  { page: "Square", width: 1080, height: 1080, layers: { title: { type: "text" }, photo: { type: "image" } } },
+  { page: "Story", width: 1080, height: 1920, layers: { title: { type: "text" }, cta: { type: "text", group: "footer" } } },
+];
+
+test("create_render validates pages against each page's own layers", async () => {
+  await withApi((call) => (call.url.pathname.endsWith("/pages") ? pagesOf : { renders: [] }), async (calls) => {
+    await assert.rejects(
+      () => handleToolCall(ctx("k"), "create_render", {
+        template: "tpl-2",
+        pages: [{ page: "Square", layers: { cta: { text: "Go" } } }, { page: "Banner", layers: {} }],
+      }),
+      (error: Error) => {
+        assert.match(error.message, /no page named "Banner"/);
+        assert.match(error.message, /Valid page names: Square, Story\./);
+        assert.match(error.message, /Page "Square" has no layer named "cta"/);
+        assert.match(error.message, /Valid layer names on that page: title, photo\./);
+        return true;
+      },
+    );
+    assert.equal(calls.find((c) => c.url.pathname.endsWith("/pages"))?.url.searchParams.get("includeLockedLayers"), "true");
+    assert.ok(!calls.some((c) => c.url.pathname === "/v1/render"));
+
+    calls.length = 0;
+    const pages = [{ page: "Story", layers: { cta: { text: "Go" }, footer: { hide: false } } }];
+    await handleToolCall(ctx("k"), "create_render", { template: "tpl-2", pages });
+    const render = calls.find((c) => c.url.pathname === "/v1/render");
+    assert.deepEqual(render?.body.pages, pages);
+    assert.equal(render?.body.layers, undefined);
+  });
+});
+
+test("create_render refuses layers and pages together (the API would ignore layers)", async () => {
+  await withApi(() => ({}), async (calls) => {
+    await assert.rejects(
+      () => handleToolCall(ctx("k"), "create_render", { template: "t", layers: { a: {} }, pages: [{ page: "P", layers: {} }] }),
+      /either layers or pages/,
+    );
+    assert.equal(calls.length, 0);
+  });
+});
+
+test("merge_renders with host false returns a small PDF as an embedded resource", async () => {
+  const pdf = new TextEncoder().encode("%PDF-1.7\n" + "x".repeat(2048));
+  const pdfResponse = (bytes: Uint8Array<ArrayBuffer>) => new Response(bytes, {
+    status: 200,
+    headers: { "content-type": "application/pdf", "content-disposition": 'form-data; name="attachment"; filename="merged_renders.pdf"' },
+  });
+  await withApi(() => pdfResponse(pdf), async (calls) => {
+    const result = await handleToolCall(ctx("k"), "merge_renders", { render_ids: ["r1", "r2"], host: false });
+    assert.deepEqual(calls[0].body, { ids: ["r1", "r2"], host: false });
+    assert.ok(result instanceof ToolContent);
+    const resource = result.content.find((c) => c.type === "resource") as any;
+    assert.equal(resource.resource.mimeType, "application/pdf");
+    assert.match(resource.resource.uri, /merged_renders\.pdf$/);
+    assert.deepEqual([...Buffer.from(resource.resource.blob, "base64")], [...pdf]);
+  });
+
+  const big = new Uint8Array(MAX_INLINE_PDF_BYTES + 1);
+  await withApi(() => pdfResponse(big), async () => {
+    await assert.rejects(
+      () => handleToolCall(ctx("k"), "merge_renders", { render_ids: ["r1"], host: false }),
+      /too large to return inline.*host set to true/,
+    );
+  });
+});
+
+test("every list tool caps limit at 100 and sends an explicit default of 25", async () => {
+  for (const name of ["list_renders", "list_templates", "list_template_renders", "list_uploads", "list_folders", "list_fonts"]) {
+    const limit = schemaOf(name).limit;
+    assert.equal(limit.maximum, 100, `${name} limit.maximum`);
+    assert.match(limit.description, /25/, `${name} documents the default`);
+  }
+  const extra = { list_template_renders: { template_id: "t1" } } as Record<string, Record<string, unknown>>;
+  for (const name of ["list_renders", "list_templates", "list_template_renders", "list_uploads"]) {
+    const [byDefault] = await captureCalls(name, { ...extra[name] }, []);
+    const params = new URL(byDefault.url).searchParams;
+    assert.equal(params.get("limit"), "25", `${name} default`);
+    assert.equal(params.get("page"), "0", `${name} page`);
+    const [capped] = await captureCalls(name, { ...extra[name], limit: 1000, page: -3 }, []);
+    assert.equal(new URL(capped.url).searchParams.get("limit"), "100", `${name} cap`);
+    assert.equal(new URL(capped.url).searchParams.get("page"), "0", `${name} page floor`);
+  }
+});
+
+test("list results are cut to the page size when the API ignores paging", async () => {
+  const templates = Array.from({ length: 40 }, (_, i) => ({ id: `t${i}`, name: `T${i}` }));
+  await withApi(() => templates, async () => {
+    const page0 = await handleToolCall(ctx("k"), "list_templates", { query: "T", limit: 10 }) as any[];
+    assert.deepEqual(page0.map((t) => t.id), ["t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9"]);
+    const page2 = await handleToolCall(ctx("k"), "list_templates", { query: "T", limit: 10, page: 2 }) as any[];
+    assert.equal(page2[0].id, "t20");
+  });
+});
+
+test("list_folders pages locally because the API returns every folder", async () => {
+  const folders = Array.from({ length: 30 }, (_, i) => ({ id: `f${i}`, name: `F${i}`, templateCount: i, teamId: "team" }));
+  await withApi(() => folders, async () => {
+    const out = await handleToolCall(ctx("k"), "list_folders", { limit: 10, page: 2 }) as any;
+    assert.deepEqual(out.folders.map((f: any) => f.id), ["f20", "f21", "f22", "f23", "f24", "f25", "f26", "f27", "f28", "f29"]);
+    assert.equal(out.total, 30);
+    assert.equal(out.hasMore, false);
+    assert.equal(out.folders[0].teamId, undefined);
+  });
+});
+
+test("list_fonts returns the team's uploaded fonts unless Google Fonts are asked for", async () => {
+  const google = Array.from({ length: 60 }, (_, i) => ({ name: `Google ${i}`, isGoogleFont: true, isUploadedFont: false, createdAt: null }));
+  const api = [
+    { name: "Brand Sans", isGoogleFont: false, isUploadedFont: true, createdAt: null, externalId: null },
+    { name: "Brand Sans", isGoogleFont: false, isUploadedFont: true, createdAt: null, externalId: null },
+    { name: "Roboto", isGoogleFont: true, isUploadedFont: false, createdAt: null },
+    ...google,
+  ];
+  await withApi(() => api, async () => {
+    const own = await handleToolCall(ctx("k"), "list_fonts", {}) as any;
+    assert.deepEqual(own, { fonts: [{ name: "Brand Sans", isGoogleFont: false, isUploadedFont: true }], page: 0, limit: 25, total: 1, hasMore: false });
+
+    const search = await handleToolCall(ctx("k"), "list_fonts", { include_google_fonts: true, query: "robo" }) as any;
+    assert.deepEqual(search.fonts.map((f: any) => f.name), ["Roboto"]);
+
+    const all = await handleToolCall(ctx("k"), "list_fonts", { include_google_fonts: true, page: 1 }) as any;
+    assert.equal(all.total, 62);
+    assert.equal(all.fonts.length, 25);
+    assert.equal(all.hasMore, true);
+  });
+  assert.ok(schemaOf("list_fonts").include_google_fonts, "include_google_fonts is declared");
+  assert.ok(schemaOf("list_fonts").query, "query is declared");
+});
+
+// Every description string the model reads: tool descriptions plus nested schema text.
+const descriptionsOf = (value: unknown, out: string[] = []): string[] => {
+  if (Array.isArray(value)) value.forEach((v) => descriptionsOf(v, out));
+  else if (value && typeof value === "object") {
+    for (const [key, v] of Object.entries(value)) {
+      if (key === "description" && typeof v === "string") out.push(v);
+      else descriptionsOf(v, out);
+    }
+  }
+  return out;
+};
+
+test("descriptions and instructions use neutral wording", () => {
+  const texts = [...descriptionsOf(tools), SERVER_INSTRUCTIONS];
+  for (const text of texts) {
+    assert.doesNotMatch(text, /\b(IMPORTANT|REQUIRED|MUST|NOT|INSTEAD|REMOVES|ALWAYS|NEVER)\b/, text);
+    assert.doesNotMatch(text, /!/, text);
+    assert.doesNotMatch(text, /main tool/i, text);
+  }
+  for (const tool of tools) {
+    assert.match(tool.description ?? "", /Use this/, `${tool.name} says when to use it`);
+  }
+  assert.match(tools.find((t) => t.name === "create_render")!.description!, /not AI image generation/);
+});
+
+test("delete tools say what is permanent and what is kept", () => {
+  const describe = (name: string) => tools.find((t) => t.name === name)!.description!;
+  for (const name of ["delete_render", "delete_template", "delete_upload", "delete_font"]) {
+    assert.match(describe(name), /permanently/i, name);
+  }
+  assert.match(describe("delete_template"), /renders already created from it are kept/i);
+  assert.match(describe("delete_folder"), /templates inside it are not deleted/i);
+});
+
+test("every tool keeps its title and explicit hints", () => {
+  for (const tool of tools) {
+    const a = tool.annotations!;
+    assert.ok(a.title, `${tool.name} title`);
+    for (const hint of ["readOnlyHint", "destructiveHint", "openWorldHint"] as const) {
+      assert.equal(typeof a[hint], "boolean", `${tool.name} ${hint}`);
+    }
+    assert.equal(a.readOnlyHint && a.destructiveHint, false, `${tool.name} cannot be read-only and destructive`);
+    if (/^(list|get)_/.test(tool.name)) assert.equal(a.readOnlyHint, true, `${tool.name} is read-only`);
+    if (/^delete_/.test(tool.name)) assert.equal(a.destructiveHint, true, `${tool.name} is destructive`);
   }
 });

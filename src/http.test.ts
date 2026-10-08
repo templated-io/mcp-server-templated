@@ -5,12 +5,13 @@ import { AddressInfo } from "net";
 import { createHttpServer } from "./http.js";
 import { loadConfig } from "./config.js";
 import { TokenValidator } from "./auth.js";
+import type { ToolCallRecord } from "./usage.js";
 
 let server: http.Server;
 let base: string;
 
 before(async () => {
-  server = createHttpServer();
+  server = createHttpServer({ logToolCall: () => {} });
   await new Promise<void>((r) => server.listen(0, () => r()));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
@@ -135,4 +136,87 @@ test("PRM endpoints are served on both paths", async () => {
 test("no credential -> 401 (no longer reaches the MCP layer)", async () => {
   const res = await postMcp("/mcp", JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list" }));
   assert.equal(res.status, 401);
+});
+
+test("tool calls are logged with the client name from an earlier initialize request", async (t) => {
+  const records: ToolCallRecord[] = [];
+  const lines: string[] = [];
+  const validator = new TokenValidator({
+    apiBaseUrl: "https://api.x",
+    fetchFn: (async () => ({ status: 200 })) as unknown as typeof fetch,
+  });
+  const s = createHttpServer({
+    config: loadConfig({} as NodeJS.ProcessEnv),
+    validator,
+    logToolCall: (record) => { records.push(record); lines.push(JSON.stringify(record)); },
+  });
+  await new Promise<void>((r) => s.listen(0, () => r()));
+  const b = `http://127.0.0.1:${(s.address() as AddressInfo).port}`;
+  const original = globalThis.fetch;
+  (globalThis as any).fetch = async (url: any, init?: any) =>
+    String(url).includes("api.templated.io")
+      ? new Response(JSON.stringify({ apiUsage: 3, apiQuota: 50 }))
+      : original(url, init);
+  t.after(() => { (globalThis as any).fetch = original; s.close(); });
+
+  const headers = {
+    "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+    "Authorization": "Bearer tok-openai", "User-Agent": "openai-mcp/1.0.0",
+  };
+  const init = await fetch(`${b}/mcp`, {
+    method: "POST", headers,
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "openai-mcp", version: "1.0.0" } } }),
+  });
+  assert.equal(init.status, 200);
+  await init.text();
+
+  const call = await fetch(`${b}/mcp`, { method: "POST", headers, body: toolCallBody(2) });
+  assert.equal(call.status, 200);
+  await call.text();
+
+  // Same key from another client (different user agent) is not mixed up with ChatGPT
+  const other = await fetch(`${b}/mcp`, { method: "POST", headers: { ...headers, "User-Agent": "Claude-User" }, body: toolCallBody(3) });
+  await other.text();
+
+  assert.equal(records.length, 2);
+  assert.deepEqual(records[0].client, { name: "openai-mcp", version: "1.0.0" });
+  assert.equal(records[0].tool, "get_account");
+  assert.equal(records[0].outcome, "ok");
+  assert.equal(records[1].client, undefined);
+  assert.equal(records[1].user_agent, "Claude-User");
+  assert.ok(lines.every((l) => !l.includes("tok-openai")), "the bearer token is never logged");
+});
+
+test("over HTTP the render card gets the public origin as ui.domain for ChatGPT only", async (t) => {
+  const validator = new TokenValidator({
+    apiBaseUrl: "https://api.x",
+    fetchFn: (async () => ({ status: 200 })) as unknown as typeof fetch,
+  });
+  const s = createHttpServer({
+    config: loadConfig({ MCP_PUBLIC_URL: "https://mcp.example.test" } as NodeJS.ProcessEnv),
+    validator,
+    logToolCall: () => {},
+  });
+  await new Promise<void>((r) => s.listen(0, () => r()));
+  const b = `http://127.0.0.1:${(s.address() as AddressInfo).port}`;
+  t.after(() => s.close());
+
+  const read = async (userAgent: string) => {
+    const res = await fetch(`${b}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+        "Authorization": "Bearer tok", "User-Agent": userAgent,
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "resources/read", params: { uri: "ui://templated/render-card-v1.html" } }),
+    });
+    assert.equal(res.status, 200);
+    const [message] = sseData(await res.text());
+    return message.result.contents[0]._meta;
+  };
+
+  assert.equal((await read("openai-mcp/1.0.0")).ui.domain, "https://mcp.example.test");
+  const claude = await read("Claude-User");
+  assert.equal(claude.ui.domain, undefined);
+  assert.equal(claude["openai/widgetDomain"], "https://mcp.example.test");
 });

@@ -1,0 +1,390 @@
+/* Host style variables (MCP Apps theming) override these fallbacks at runtime. */
+:root {
+  color-scheme: light dark;
+  --color-background-primary: #ffffff;
+  --color-background-secondary: #f4f3ef;
+  --color-background-inverse: #1f1e1d;
+  --color-text-primary: #1f1e1d;
+  --color-text-secondary: #5e5d59;
+  --color-text-inverse: #ffffff;
+  --color-text-danger: #a73d39;
+  --color-border-secondary: rgba(31, 30, 29, 0.3);
+  --color-border-tertiary: rgba(31, 30, 29, 0.15);
+  --color-ring-primary: #4682d5;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-text-xs-size: 0.75rem;
+  --font-text-sm-size: 0.875rem;
+  --font-text-md-size: 1rem;
+  --border-radius-sm: 6px;
+  --border-radius-md: 8px;
+  --border-radius-lg: 12px;
+  --border-width-regular: 1px;
+  --media-max-h: 480px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-background-primary: #262624;
+    --color-background-secondary: #30302e;
+    --color-background-inverse: #faf9f5;
+    --color-text-primary: #faf9f5;
+    --color-text-secondary: #c2c0b6;
+    --color-text-inverse: #141413;
+    --color-text-danger: #e07a76;
+    --color-border-secondary: rgba(222, 220, 209, 0.3);
+    --color-border-tertiary: rgba(222, 220, 209, 0.15);
+  }
+}
+
+:root[data-theme="dark"] {
+  --color-background-primary: #262624;
+  --color-background-secondary: #30302e;
+  --color-background-inverse: #faf9f5;
+  --color-text-primary: #faf9f5;
+  --color-text-secondary: #c2c0b6;
+  --color-text-inverse: #141413;
+  --color-text-danger: #e07a76;
+  --color-border-secondary: rgba(222, 220, 209, 0.3);
+  --color-border-tertiary: rgba(222, 220, 209, 0.15);
+}
+
+html,
+body {
+  margin: 0;
+  background: transparent;
+}
+
+body {
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--font-text-sm-size);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+}
+
+#root {
+  padding: calc(12px + var(--safe-top, 0px)) calc(12px + var(--safe-right, 0px))
+    calc(12px + var(--safe-bottom, 0px)) calc(12px + var(--safe-left, 0px));
+}
+
+html[data-display-mode="fullscreen"] #root {
+  max-width: 1120px;
+  margin: 0 auto;
+  --media-max-h: calc(100vh - 160px);
+}
+
+svg {
+  flex: none;
+}
+
+/* Media stage: the render keeps its aspect ratio, centered on a quiet backdrop. */
+.media {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: var(--color-background-secondary);
+  border-radius: var(--border-radius-md);
+  overflow: hidden;
+}
+
+.frame {
+  position: relative;
+  max-width: 100%;
+}
+
+.frame > img,
+.frame > video,
+.thumb > img,
+.thumb > video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.frame.free > img,
+.frame.free > video {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: var(--media-max-h);
+}
+
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  min-height: 140px;
+  padding: 16px;
+  box-sizing: border-box;
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+/* While rendering, a shorter box of the same shape; it grows when the file arrives. */
+.frame.waiting {
+  --media-max-h: 220px;
+}
+
+.frame:not(.free) > .placeholder {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--color-border-tertiary);
+  border-top-color: var(--color-text-secondary);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 2.4s;
+  }
+}
+
+/* Title, meta line and actions. */
+.body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 12px;
+  margin-top: 12px;
+}
+
+.media + .body,
+.grid + .body,
+.list + .body {
+  margin-top: 12px;
+}
+
+.text {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--font-text-md-size);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  margin: 2px 0 0;
+  color: var(--color-text-secondary);
+}
+
+.note {
+  margin: 10px 0 0;
+  color: var(--color-text-secondary);
+}
+
+.note.danger {
+  color: var(--color-text-danger);
+}
+
+.actions {
+  display: flex;
+  flex: 1 1 200px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.btn {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  box-sizing: border-box;
+  border: var(--border-width-regular) solid transparent;
+  border-radius: var(--border-radius-md);
+  font: inherit;
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.btn.primary {
+  background: var(--color-background-inverse);
+  color: var(--color-text-inverse);
+}
+
+.btn.secondary {
+  background: transparent;
+  color: var(--color-text-primary);
+  border-color: var(--color-border-secondary);
+}
+
+@media (hover: hover) {
+  .btn:hover {
+    filter: brightness(0.94);
+  }
+  .tile:hover .thumb,
+  .row:hover {
+    border-color: var(--color-border-secondary);
+  }
+}
+
+.btn:focus-visible,
+.tile:focus-visible,
+.row:focus-visible {
+  outline: 2px solid var(--color-ring-primary);
+  outline-offset: 2px;
+}
+
+/* A single PDF or other file: an icon tile instead of a preview. */
+.file {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  background: var(--color-background-secondary);
+  border-radius: var(--border-radius-md);
+  color: var(--color-text-secondary);
+}
+
+.file .text {
+  color: var(--color-text-primary);
+}
+
+/* Several renders: image and video pages in a grid, other files in a list. */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 10px;
+}
+
+html[data-display-mode="fullscreen"] .grid {
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.tile:disabled {
+  cursor: default;
+}
+
+.thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  overflow: hidden;
+  background: var(--color-background-secondary);
+  border: var(--border-width-regular) solid transparent;
+  border-radius: var(--border-radius-md);
+  color: var(--color-text-secondary);
+}
+
+.tile-label {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: var(--font-text-xs-size);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.more {
+  font-size: var(--font-text-md-size);
+  font-weight: var(--font-weight-semibold);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  box-sizing: border-box;
+  border: var(--border-width-regular) solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-md);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.row .grow {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.row .meta {
+  margin: 0;
+}
+
+/* Narrow cards (phones): full-width buttons. */
+@media (max-width: 520px) {
+  .actions .btn {
+    flex: 1 1 auto;
+  }
+}
+
+@media (pointer: coarse) {
+  .btn,
+  .row {
+    min-height: 44px;
+  }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

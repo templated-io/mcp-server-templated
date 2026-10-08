@@ -3,9 +3,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { contextFromEnv } from "./context.js";
 import { createServer } from "./server.js";
 import { createHttpServer } from "./http.js";
+import { loadConfig } from "./config.js";
 
 async function startStdioMode() {
-  const server = createServer(contextFromEnv());
+  const server = createServer(contextFromEnv(), { appUrl: loadConfig().appUrl });
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Templated MCP server running on stdio");

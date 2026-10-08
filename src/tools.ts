@@ -1,15 +1,38 @@
-import { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { RequestContext } from "./context.js";
-import { apiRequest, apiUpload, validateTemplateInFolder, moveTemplateToFolder, validateTemplateByExternalId } from "./api.js";
+import {
+  apiRequest, apiUpload, validateTemplateInFolder, moveTemplateToFolder, validateTemplateByExternalId,
+  ApiError, ErrorTarget, FileResponse, InputError,
+} from "./api.js";
 import { fetchRemoteFile } from "./remote.js";
 import { sanitizeToolResult } from "./sanitize.js";
+import { CREATE_RENDER_META, GET_RENDER_META, RENDER_CARD_OUTPUT_SCHEMA } from "./ui.js";
 
 // =============================================================================
 // TOOL DEFINITIONS
 // =============================================================================
 
+const DEFAULT_LIMIT = 25;
+const MAX_LIMIT = 100;
+
+// merge_renders with host=false returns the PDF inline as base64. Tool results
+// over about 150k characters fail on claude.ai, and 100 KB of PDF is about 137k.
+export const MAX_INLINE_PDF_BYTES = 100 * 1024;
+
+const pageParam = {
+  type: "number",
+  minimum: 0,
+  description: "Page number, starting at 0 (default: 0)",
+};
+const limitParam = {
+  type: "number",
+  minimum: 1,
+  maximum: MAX_LIMIT,
+  description: `Results per page (default: ${DEFAULT_LIMIT}, max: ${MAX_LIMIT})`,
+};
+
 // Layer properties accepted inside a page of the `pages` array. Unlike the
-// top-level `layers` array, a page's `layers` is an OBJECT keyed by layer name,
+// top-level `layers` array, a page's `layers` is an object keyed by layer name,
 // so there is no `layer` field here (the key is the name).
 const pageLayerProperties = {
   type: { type: "string", enum: ["text", "image", "shape", "rating"], description: "Layer type" },
@@ -27,16 +50,16 @@ const pageLayerProperties = {
 const pagesSchema = {
   type: "array",
   description:
-    "Pages for multi-page or multi-size templates (e.g. Instagram square, story and X landscape in ONE template, each with its own width/height). " +
-    "Use this INSTEAD of top-level 'layers'. Each page: 'page' (unique name), optional 'width'/'height' (fall back to the template size), " +
-    "and 'layers' as an OBJECT keyed by layer name (NOT an array). Same shape as get_template_pages returns.",
+    "Pages for a multi-page or multi-size template (for example an Instagram square, a story and an X landscape version in one template, each with its own width and height). " +
+    "Used in place of top-level 'layers'. Each page has 'page' (a unique name), optional 'width'/'height' (default: the template size), " +
+    "and 'layers' as an object keyed by layer name, the same shape get_template_pages returns.",
   items: {
     type: "object",
     properties: {
       page: { type: "string", description: "Unique page name (e.g. 'Insta Story', 'X Landscape')" },
       width: { type: "number", description: "Page width in pixels (defaults to template width)" },
       height: { type: "number", description: "Page height in pixels (defaults to template height)" },
-      hide: { type: "boolean", description: "On update_template, true REMOVES the page from the template" },
+      hide: { type: "boolean", description: "On update_template, true deletes the page from the template" },
       layers: {
         type: "object",
         description: "Layers keyed by layer name: { \"title\": { \"type\": \"text\", \"text\": \"Hi\", ... } }",
@@ -53,7 +76,13 @@ export const tools: Tool[] = [
   // ---------------------------------------------------------------------------
   {
     name: "create_render",
-    description: "Create a render (image, video, or PDF) from a template. This is the main tool for generating content. Supports formats: jpg, png, webp, pdf, mp4.",
+    description:
+      "Render a Templated template into an image (JPG, PNG or WebP), a PDF or an MP4 video, with new text, images and colors in its layers. " +
+      "Use this when the user wants a finished design from one of their templates, such as a social media post, banner, OG image, certificate or invoice. " +
+      "Templated fills the saved template with the exact values given: this is template rendering, not AI image generation. " +
+      "Pass the template ID and 'layers' keyed by the layer names from get_template_layers; names the template doesn't have are rejected before anything is rendered. " +
+      "Multi-page templates render every page, or only the pages listed in 'pages'. Each output counts toward the account's render usage. " +
+      "Returns the render with its file URL (one render per page for multi-page templates).",
     annotations: {
       title: "Create Render",
       readOnlyHint: false,
@@ -65,7 +94,7 @@ export const tools: Tool[] = [
       properties: {
         template: {
           type: "string",
-          description: "The template ID to render",
+          description: "The template ID to render (from list_templates)",
         },
         format: {
           type: "string",
@@ -74,9 +103,27 @@ export const tools: Tool[] = [
         },
         layers: {
           type: "object",
-          description: "Layer modifications. Keys are layer names, values are objects with properties like: text, image_url, color, background, hide, animation, etc. The 'animation' property (MP4 only) is an object with: 'in' (entrance: type=slide|fade|zoom|rotate, direction, duration, writingStyle), 'loop' (type=spin|pulse, duration), 'out' (exit: type=slide|fade|zoom, direction, duration), 'start' (ms when layer appears), 'end' (ms when layer disappears). All animation durations are in milliseconds.",
+          description:
+            "Layer values keyed by layer name, e.g. { \"title\": { \"text\": \"Hello\" }, \"photo\": { \"image_url\": \"https://...\" } }. " +
+            "Each value can set text, image_url, color, background, hide and other layer properties. " +
+            "'animation' (MP4 only) takes 'in' (entrance: type slide|fade|zoom|rotate, direction, duration, writingStyle), 'loop' (type spin|pulse, duration), " +
+            "'out' (exit: type slide|fade|zoom, direction, duration), 'start' and 'end' (when the layer appears and disappears). All animation times are in milliseconds.",
           additionalProperties: {
             type: "object",
+          },
+        },
+        pages: {
+          type: "array",
+          description:
+            "For multi-page templates: the pages to render, each with its own layer values. Each item has 'page' (a page name from get_template_pages) " +
+            "and 'layers' keyed by layer name, like the top-level 'layers'. Only the listed pages are rendered. Use either 'layers' or 'pages' in one call.",
+          items: {
+            type: "object",
+            properties: {
+              page: { type: "string", description: "Page name, as returned by get_template_pages" },
+              layers: { type: "object", description: "Layer values for this page, keyed by layer name", additionalProperties: { type: "object" } },
+            },
+            required: ["page"],
           },
         },
         transparent: {
@@ -122,10 +169,14 @@ export const tools: Tool[] = [
       },
       required: ["template"],
     },
+    outputSchema: RENDER_CARD_OUTPUT_SCHEMA,
+    _meta: CREATE_RENDER_META,
   },
   {
     name: "get_render",
-    description: "Retrieve a specific render by its ID to get the status and file URL",
+    description:
+      "Get one render by ID with its status, format, size and file URL. " +
+      "Use this to check whether a render has finished or to find its URL again.",
     annotations: {
       title: "Get Render",
       readOnlyHint: true,
@@ -142,10 +193,15 @@ export const tools: Tool[] = [
       },
       required: ["render_id"],
     },
+    outputSchema: RENDER_CARD_OUTPUT_SCHEMA,
+    _meta: GET_RENDER_META,
   },
   {
     name: "list_renders",
-    description: "List all renders in the account",
+    description:
+      `List the renders in the connected Templated account, newest first, ${DEFAULT_LIMIT} per page by default (max ${MAX_LIMIT}). ` +
+      "Use this to find a render's ID or file URL, for example to merge PDFs with merge_renders. " +
+      "Returns each render's id, url, status, format, size and template.",
     annotations: {
       title: "List Renders",
       readOnlyHint: true,
@@ -155,20 +211,16 @@ export const tools: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        page: {
-          type: "number",
-          description: "Page number (default: 0)",
-        },
-        limit: {
-          type: "number",
-          description: "Results per page (default: 25)",
-        },
+        page: pageParam,
+        limit: limitParam,
       },
     },
   },
   {
     name: "delete_render",
-    description: "Delete a specific render",
+    description:
+      "Permanently delete a render from the connected Templated account; it can't be restored. " +
+      "Use this when the user asks to remove a render. Takes the render ID from list_renders and returns a confirmation.",
     annotations: {
       title: "Delete Render",
       readOnlyHint: false,
@@ -188,7 +240,10 @@ export const tools: Tool[] = [
   },
   {
     name: "merge_renders",
-    description: "Merge multiple PDF renders into a single PDF document",
+    description:
+      "Merge several renders into one PDF, in the order given, for example one certificate or invoice per recipient. Image renders become PDF pages. " +
+      "Use this after creating the individual renders. Each merge counts toward the account's render usage. " +
+      `Returns the URL of the merged PDF. With host set to false the PDF itself is returned inline instead, which only works for PDFs up to ${MAX_INLINE_PDF_BYTES / 1024} KB.`,
     annotations: {
       title: "Merge Renders into PDF",
       readOnlyHint: false,
@@ -201,11 +256,11 @@ export const tools: Tool[] = [
         render_ids: {
           type: "array",
           items: { type: "string" },
-          description: "Array of render IDs to merge",
+          description: "Render IDs to merge, in page order",
         },
         host: {
           type: "boolean",
-          description: "If true, returns a hosted URL. If false, returns the file directly",
+          description: `true (default): return a URL to the merged PDF. false: return the PDF inline as an embedded file, for PDFs up to ${MAX_INLINE_PDF_BYTES / 1024} KB.`,
         },
       },
       required: ["render_ids"],
@@ -217,7 +272,10 @@ export const tools: Tool[] = [
   // ---------------------------------------------------------------------------
   {
     name: "list_templates",
-    description: "List all templates in the account. Use this to find template IDs for rendering.",
+    description:
+      `List the templates in the connected Templated account, ${DEFAULT_LIMIT} per page by default (max ${MAX_LIMIT}), optionally filtered by name (query), size (width, height) or tags. ` +
+      "Use this first to find the template ID for create_render, get_template_layers or update_template. " +
+      "Returns each template's id, name, size, thumbnail, folder, and layer and page counts.",
     annotations: {
       title: "List Templates",
       readOnlyHint: true,
@@ -231,14 +289,8 @@ export const tools: Tool[] = [
           type: "string",
           description: "Search query to filter templates by name",
         },
-        page: {
-          type: "number",
-          description: "Page number (default: 0)",
-        },
-        limit: {
-          type: "number",
-          description: "Results per page (default: 25)",
-        },
+        page: pageParam,
+        limit: limitParam,
         width: {
           type: "number",
           description: "Filter by template width",
@@ -253,14 +305,16 @@ export const tools: Tool[] = [
         },
         includeLayers: {
           type: "boolean",
-          description: "Include layer information in response",
+          description: "Include each template's layers (a much larger response; get_template_layers reads one template's layers)",
         },
       },
     },
   },
   {
     name: "get_template",
-    description: "Retrieve a specific template by ID",
+    description:
+      "Get one template's details by ID: name, size, background, thumbnail, tags, folder, and layer and page counts. " +
+      "Use this to check a template's size or settings; get_template_layers returns its editable layers.",
     annotations: {
       title: "Get Template",
       readOnlyHint: true,
@@ -280,7 +334,10 @@ export const tools: Tool[] = [
   },
   {
     name: "get_template_layers",
-    description: "Get all layers of a template. Use this to understand what layers can be modified when creating a render.",
+    description:
+      "List a template's layers with their names, types and current values (text, image_url, colors, fonts, position and size). " +
+      "Use this before create_render: the layer names are the keys create_render accepts in 'layers'. " +
+      "Covers every page of a multi-page template; get_template_pages groups the layers by page.",
     annotations: {
       title: "Get Template Layers",
       readOnlyHint: true,
@@ -300,7 +357,9 @@ export const tools: Tool[] = [
   },
   {
     name: "get_template_pages",
-    description: "Get all pages of a multi-page template",
+    description:
+      "List the pages of a multi-page or multi-size template, each with its name, width, height and layers keyed by layer name. " +
+      "Use this to render specific pages with create_render ('pages') or to edit pages with update_template, which accepts the same shape.",
     annotations: {
       title: "Get Template Pages",
       readOnlyHint: true,
@@ -320,7 +379,12 @@ export const tools: Tool[] = [
   },
   {
     name: "create_template",
-    description: "Create a new template programmatically with layers. IMPORTANT: Each layer must have a 'layer' field (unique identifier/name), not 'name'. Valid layer types are: 'text', 'image', 'shape', 'rating'. Use 'shape' for rectangles, circles, and other shapes - shapes require an 'html' field with SVG content. For a multi-page or multi-size template (several sizes in one template), pass 'pages' instead of 'layers': each page carries its own width/height and its layers as an object keyed by layer name.",
+    description:
+      "Create a new template in the connected Templated account from layers, for example a social media post, banner, OG image, certificate or invoice. " +
+      "Use this when none of the existing templates fits or the account has no templates yet. " +
+      "Each layer has a unique name in 'layer' and a 'type': text, image, shape or rating. Shape layers draw rectangles, circles and other shapes from SVG content in 'html'. " +
+      "For a multi-page or multi-size template (several sizes in one template), pass 'pages' in place of 'layers'. " +
+      "Returns the new template; its ID can be rendered right away with create_render.",
     annotations: {
       title: "Create Template",
       readOnlyHint: false,
@@ -352,18 +416,18 @@ export const tools: Tool[] = [
         },
         layers: {
           type: "array",
-          description: "Array of layer objects. Each layer MUST have 'layer' (unique name) and 'type' fields.",
+          description: "Layers of a single-page template. Each layer object has 'layer' (its unique name, later used as the key in create_render) and 'type'.",
           items: {
             type: "object",
             properties: {
               layer: {
                 type: "string",
-                description: "REQUIRED: Unique layer identifier/name (e.g., 'title', 'background', 'photo'). This is NOT 'name', use 'layer'!",
+                description: "Unique layer name (e.g., 'title', 'background', 'photo'). The field is called 'layer'; there is no 'name' field.",
               },
               type: {
                 type: "string",
                 enum: ["text", "image", "shape", "rating"],
-                description: "REQUIRED: Layer type. Use 'shape' for rectangles/circles (NOT 'rectangle'). Shapes need 'html' with SVG content.",
+                description: "Layer type. Rectangles, circles and other shapes use 'shape' with SVG content in 'html'.",
               },
               x: { type: "number", description: "X position in pixels" },
               y: { type: "number", description: "Y position in pixels" },
@@ -388,7 +452,7 @@ export const tools: Tool[] = [
               fill: { type: "string", description: "SVG fill color" },
               stroke: { type: "string", description: "SVG stroke color" },
               // Common styling
-              background: { type: "string", description: "Background color/gradient (for shapes use this OR html with SVG)" },
+              background: { type: "string", description: "Background color or gradient (shapes can use this or SVG content in html)" },
               border_width: { type: "number", description: "Border width in pixels" },
               border_color: { type: "string", description: "Border color" },
               border_radius: { type: "string", description: "Border radius (e.g., '8px', '50%')" },
@@ -441,7 +505,14 @@ export const tools: Tool[] = [
   },
   {
     name: "update_template",
-    description: "Update an existing template. IMPORTANT: Each layer must have a 'layer' field (unique identifier), not 'name'. Valid types: 'text', 'image', 'shape', 'rating'. For multi-page templates use 'pages': a page name that does not exist yet is ADDED to the template, an existing one has its layers merged (or replaced with replaceLayers). To change page sizes on a multi-size template set width/height per page inside 'pages'; top-level width/height are rejected there because they would resize every page.",
+    description:
+      "Change an existing template: name, description, size, background, default video duration, layers or pages. " +
+      "Use this to edit a design, resize it, or add sizes to a multi-size template. " +
+      "Layers are matched by their 'layer' name: an existing layer is updated in place and a new name is added. Top-level 'layers' apply to the first page; 'pages' reaches the others. " +
+      "With replaceLayers true, layers missing from the request are deleted. To move a layer, send both x and y (a missing coordinate is set to 0). " +
+      "In 'pages', a page name that doesn't exist yet is added and an existing page has its layers updated. " +
+      "On a multi-size template, set width and height per page inside 'pages'; top-level width and height are rejected there because they would resize every page. " +
+      "Returns the updated template.",
     annotations: {
       title: "Update Template",
       readOnlyHint: false,
@@ -481,11 +552,11 @@ export const tools: Tool[] = [
         },
         layers: {
           type: "array",
-          description: "Layer definitions. Each must have 'layer' (unique name) and 'type' (text/image/shape/rating).",
+          description: "Layer definitions. Each has 'layer' (its unique name) and 'type' (text, image, shape or rating).",
           items: {
             type: "object",
             properties: {
-              layer: { type: "string", description: "REQUIRED: Unique layer identifier (NOT 'name')" },
+              layer: { type: "string", description: "Unique layer name. The field is called 'layer'; there is no 'name' field." },
               type: { type: "string", enum: ["text", "image", "shape", "rating"], description: "Layer type" },
               x: { type: "number" }, y: { type: "number" },
               width: { type: "number" }, height: { type: "number" },
@@ -510,7 +581,7 @@ export const tools: Tool[] = [
         },
         replaceLayers: {
           type: "boolean",
-          description: "If true, replaces all layers. If false, merges with existing",
+          description: "true: delete the layers (on the pages being updated) that are missing from the request. false (default): keep them.",
         },
         pages: pagesSchema,
       },
@@ -519,7 +590,9 @@ export const tools: Tool[] = [
   },
   {
     name: "clone_template",
-    description: "Create a copy of an existing template",
+    description:
+      "Copy a template, with all its layers and pages, into a new template in the same account. " +
+      "Use this to make a variation without changing the original. Returns the copy, which keeps the original's name unless 'name' is given.",
     annotations: {
       title: "Clone Template",
       readOnlyHint: false,
@@ -543,7 +616,9 @@ export const tools: Tool[] = [
   },
   {
     name: "delete_template",
-    description: "Delete a template",
+    description:
+      "Permanently delete a template from the connected Templated account; it can't be restored or rendered afterwards. " +
+      "Renders already created from it are kept. Use this when the user asks to delete a template.",
     annotations: {
       title: "Delete Template",
       readOnlyHint: false,
@@ -563,7 +638,9 @@ export const tools: Tool[] = [
   },
   {
     name: "list_template_renders",
-    description: "List all renders created from a specific template",
+    description:
+      `List the renders created from one template, ${DEFAULT_LIMIT} per page by default (max ${MAX_LIMIT}). ` +
+      "Use this to find earlier outputs of a template. Returns each render's id, url, status and format.",
     annotations: {
       title: "List Renders from Template",
       readOnlyHint: true,
@@ -577,14 +654,8 @@ export const tools: Tool[] = [
           type: "string",
           description: "The template ID",
         },
-        page: {
-          type: "number",
-          description: "Page number",
-        },
-        limit: {
-          type: "number",
-          description: "Results per page",
-        },
+        page: pageParam,
+        limit: limitParam,
       },
       required: ["template_id"],
     },
@@ -595,7 +666,9 @@ export const tools: Tool[] = [
   // ---------------------------------------------------------------------------
   {
     name: "list_folders",
-    description: "List all folders in the account",
+    description:
+      `List the folders in the connected Templated account with the number of templates in each, ${DEFAULT_LIMIT} per page by default (max ${MAX_LIMIT}). ` +
+      "Use this to find a folder ID for update_folder or delete_folder. Returns the folders plus total and hasMore.",
     annotations: {
       title: "List Folders",
       readOnlyHint: true,
@@ -605,20 +678,16 @@ export const tools: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        page: {
-          type: "number",
-          description: "Page number",
-        },
-        limit: {
-          type: "number",
-          description: "Results per page",
-        },
+        page: pageParam,
+        limit: limitParam,
       },
     },
   },
   {
     name: "create_folder",
-    description: "Create a new folder to organize templates",
+    description:
+      "Create a folder to organize templates in the connected Templated account. " +
+      "Use this when the user wants to group templates. Returns the new folder with its ID.",
     annotations: {
       title: "Create Folder",
       readOnlyHint: false,
@@ -638,7 +707,7 @@ export const tools: Tool[] = [
   },
   {
     name: "update_folder",
-    description: "Update a folder's name",
+    description: "Rename a folder. Use this when the user wants to change a folder's name. Returns the updated folder.",
     annotations: {
       title: "Update Folder",
       readOnlyHint: false,
@@ -662,7 +731,9 @@ export const tools: Tool[] = [
   },
   {
     name: "delete_folder",
-    description: "Delete a folder",
+    description:
+      "Delete a folder from the connected Templated account. The templates inside it are not deleted: they move out of the folder to the top level of the account. " +
+      "Use this when the user asks to remove a folder.",
     annotations: {
       title: "Delete Folder",
       readOnlyHint: false,
@@ -686,7 +757,10 @@ export const tools: Tool[] = [
   // ---------------------------------------------------------------------------
   {
     name: "list_uploads",
-    description: "List all uploaded assets (images, videos)",
+    description:
+      `List the images uploaded to the connected Templated account, ${DEFAULT_LIMIT} per page by default (max ${MAX_LIMIT}). ` +
+      "Use this to reuse an uploaded image: its 'path' is a URL that can be set as image_url on an image layer. " +
+      "Returns each upload's id, name, type, size and path.",
     annotations: {
       title: "List Uploads",
       readOnlyHint: true,
@@ -696,20 +770,17 @@ export const tools: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        page: {
-          type: "number",
-          description: "Page number",
-        },
-        limit: {
-          type: "number",
-          description: "Results per page",
-        },
+        page: pageParam,
+        limit: limitParam,
       },
     },
   },
   {
     name: "create_upload",
-    description: "Upload a file from a URL",
+    description:
+      "Upload an image (JPG, PNG, WebP or SVG, up to 10 MB) from a public URL to the connected Templated account. " +
+      "Use this to keep an image in the account's assets for templates and renders. " +
+      "Returns the upload; its 'path' is the URL to use as image_url. API reference: https://templated.io/docs",
     annotations: {
       title: "Upload Image from URL",
       readOnlyHint: false,
@@ -721,7 +792,7 @@ export const tools: Tool[] = [
       properties: {
         url: {
           type: "string",
-          description: "URL of the file to upload",
+          description: "Public URL of the image to upload",
         },
         name: {
           type: "string",
@@ -733,7 +804,9 @@ export const tools: Tool[] = [
   },
   {
     name: "delete_upload",
-    description: "Delete an uploaded asset",
+    description:
+      "Permanently delete an uploaded image from the connected Templated account; it can't be restored. " +
+      "Use this when the user asks to remove an upload. Takes the upload ID from list_uploads.",
     annotations: {
       title: "Delete Upload",
       readOnlyHint: false,
@@ -757,7 +830,11 @@ export const tools: Tool[] = [
   // ---------------------------------------------------------------------------
   {
     name: "list_fonts",
-    description: "List all custom fonts uploaded to the account",
+    description:
+      `List the custom fonts uploaded to the connected Templated account, ${DEFAULT_LIMIT} per page by default (max ${MAX_LIMIT}). ` +
+      "Templates can also use any Google Font by family name: set include_google_fonts to true to list those too, and query to search by name. " +
+      "Use this to choose a font_family for create_template or update_template, or to find the name for delete_font. " +
+      "Returns the font names plus total and hasMore.",
     annotations: {
       title: "List Fonts",
       readOnlyHint: true,
@@ -767,20 +844,25 @@ export const tools: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        page: {
-          type: "number",
-          description: "Page number",
+        query: {
+          type: "string",
+          description: "Only fonts whose name contains this text (case-insensitive)",
         },
-        limit: {
-          type: "number",
-          description: "Results per page",
+        include_google_fonts: {
+          type: "boolean",
+          description: "Also list the Google Fonts available to every template (default: false)",
         },
+        page: pageParam,
+        limit: limitParam,
       },
     },
   },
   {
     name: "upload_font",
-    description: "Upload a custom font from a URL",
+    description:
+      "Upload a custom font file (TTF, OTF, WOFF or WOFF2) from a public URL to the connected Templated account under the given family name. " +
+      "Use this when a design needs a font that isn't a Google Font; templates then use it as font_family. " +
+      "Returns the font. API reference: https://templated.io/docs",
     annotations: {
       title: "Upload Font",
       readOnlyHint: false,
@@ -804,7 +886,9 @@ export const tools: Tool[] = [
   },
   {
     name: "delete_font",
-    description: "Delete a custom font",
+    description:
+      "Permanently delete a custom font from the connected Templated account by family name, including every file uploaded under that name. " +
+      "Templates that use it fall back to another font in later renders. Use this when the user asks to remove a font.",
     annotations: {
       title: "Delete Font",
       readOnlyHint: false,
@@ -828,9 +912,11 @@ export const tools: Tool[] = [
   // ---------------------------------------------------------------------------
   {
     name: "get_account",
-    description: "Get the connected account's render usage for the current period (renders used and renders included)",
+    description:
+      "Get the connected Templated account's render usage for the current period: renders used (apiUsage), renders included (apiQuota) and the percentage used. " +
+      "Use this to check how many renders are left before a large batch.",
     annotations: {
-      title: "Get Account Info",
+      title: "Get Render Usage",
       readOnlyHint: true,
       destructiveHint: false,
       openWorldHint: false,
@@ -846,12 +932,257 @@ export const tools: Tool[] = [
 // TOOL HANDLERS
 // =============================================================================
 
+type Args = Record<string, unknown>;
+
+const isObject = (value: unknown): value is Args =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+// A result that is already MCP content (an embedded file) instead of JSON data.
+export class ToolContent {
+  constructor(readonly content: CallToolResult["content"]) {}
+}
+
+// Where the model can look up a valid value for an ID parameter.
+const ID_HINTS: Record<string, string> = {
+  template: "Call list_templates to get template IDs.",
+  template_id: "Call list_templates to get template IDs.",
+  render_id: "Call list_renders to get render IDs.",
+  render_ids: "Call list_renders to get render IDs.",
+  folder_id: "Call list_folders to get folder IDs.",
+  upload_id: "Call list_uploads to get upload IDs.",
+  font_name: "Call list_fonts to get font names.",
+};
+const hint = (param: string) => (ID_HINTS[param] ? ` ${ID_HINTS[param]}` : "");
+
+function assertRequired(name: string, args: Args): void {
+  const tool = tools.find((t) => t.name === name);
+  if (!tool) {
+    throw new InputError(`Unknown tool: ${name}.`);
+  }
+  for (const param of tool.inputSchema.required ?? []) {
+    const value = args[param];
+    const missing = value === undefined || value === null ||
+      (typeof value === "string" && value.trim() === "") ||
+      (Array.isArray(value) && value.length === 0);
+    if (missing) {
+      throw new InputError(`Missing required parameter "${param}".${hint(param)}`);
+    }
+  }
+}
+
+// IDs come from the model and end up in URL paths, where they are percent-encoded
+// (enc). "." and ".." are refused: URL parsing resolves them as path segments even
+// when encoded, so they could point the request at another endpoint.
+function idParam(args: Args, param: string): string {
+  const value = args[param];
+  const id = typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
+  if (!id || id === "." || id === "..") {
+    throw new InputError(`Invalid ${param} ${JSON.stringify(value)}.${hint(param)}`);
+  }
+  return id;
+}
+const enc = encodeURIComponent;
+
+// Which item a call is about, so API errors can name it.
+function errorTarget(name: string, args: Args): ErrorTarget | undefined {
+  const ids = (value: unknown) => (Array.isArray(value) ? value : value === undefined ? [] : [value]).map(String);
+  switch (name) {
+    case "create_render":
+      return { kind: "template", ids: ids(args.template), listTool: "list_templates" };
+    case "get_template":
+    case "get_template_layers":
+    case "get_template_pages":
+    case "update_template":
+    case "clone_template":
+    case "delete_template":
+    case "list_template_renders":
+      return { kind: "template", ids: ids(args.template_id), listTool: "list_templates" };
+    case "get_render":
+    case "delete_render":
+      return { kind: "render", ids: ids(args.render_id), listTool: "list_renders" };
+    case "merge_renders":
+      return { kind: "render", ids: ids(args.render_ids), listTool: "list_renders" };
+    case "update_folder":
+    case "delete_folder":
+      return { kind: "folder", ids: ids(args.folder_id), listTool: "list_folders" };
+    case "delete_upload":
+      return { kind: "upload", ids: ids(args.upload_id), listTool: "list_uploads" };
+    case "delete_font":
+      return { kind: "font", ids: ids(args.font_name), listTool: "list_fonts" };
+    default:
+      return undefined;
+  }
+}
+
 export async function handleToolCall(
   ctx: RequestContext,
   name: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown> | undefined
 ): Promise<unknown> {
-  return sanitizeToolResult(name, await executeToolCall(ctx, name, args));
+  const input = isObject(args) ? args : {};
+  assertRequired(name, input);
+  try {
+    const result = await executeToolCall(ctx, name, input);
+    return result instanceof ToolContent ? result : sanitizeToolResult(name, result);
+  } catch (error) {
+    if (error instanceof ApiError) throw error.about(errorTarget(name, input));
+    throw error;
+  }
+}
+
+// --- paging -------------------------------------------------------------------
+
+interface Paging { page: number; limit: number }
+
+function paging(args: Args): Paging {
+  const page = Math.floor(Number(args.page));
+  const limit = Math.floor(Number(args.limit));
+  return {
+    page: Number.isFinite(page) && page > 0 ? page : 0,
+    limit: Number.isFinite(limit) && limit > 0 ? Math.min(limit, MAX_LIMIT) : DEFAULT_LIMIT,
+  };
+}
+
+const pagingParams = ({ page, limit }: Paging): Record<string, string> => ({ page: String(page), limit: String(limit) });
+
+// Some list endpoints ignore page/limit (template search by name or tags) and
+// return every match; cut those to the requested page so no list exceeds the limit.
+function cutToPage(result: unknown, { page, limit }: Paging): unknown {
+  if (!Array.isArray(result) || result.length <= limit) return result;
+  return result.slice(page * limit, page * limit + limit);
+}
+
+// For endpoints that always return everything (folders, fonts).
+function pageLocally(listKey: string, items: unknown[], { page, limit }: Paging) {
+  const start = page * limit;
+  return { page, limit, total: items.length, hasMore: start + limit < items.length, [listKey]: items.slice(start, start + limit) };
+}
+
+// --- create_render layer checks -------------------------------------------------
+
+interface LayerInfo { layer?: string; group?: string | null; locked?: boolean | null }
+interface PageInfo { page?: string; layers?: Record<string, LayerInfo> }
+
+const MAX_LISTED_NAMES = 40;
+
+function listNames(names: string[]): string {
+  if (names.length === 0) return "none";
+  const shown = names.slice(0, MAX_LISTED_NAMES).join(", ");
+  return names.length > MAX_LISTED_NAMES ? `${shown} and ${names.length - MAX_LISTED_NAMES} more` : shown;
+}
+
+// Keys a render accepts: layer names (locked ones included, the renderer applies
+// them) and group names (a group can be hidden as a whole). The error lists the
+// unlocked layer names, the same ones get_template_layers shows.
+function unknownLayerNames(keys: string[], known: LayerInfo[]): { unknown: string; valid: string } | undefined {
+  const accepted = new Set<string>();
+  const offered = new Set<string>();
+  for (const layer of known) {
+    if (layer.layer) {
+      accepted.add(layer.layer);
+      if (!layer.locked) offered.add(layer.layer);
+    }
+    if (layer.group) accepted.add(layer.group);
+  }
+  const unknown = keys.filter((key) => !accepted.has(key));
+  if (unknown.length === 0) return undefined;
+  const described = unknown.map((key) => {
+    const match = [...accepted].find((name) => name.toLowerCase() === key.toLowerCase());
+    return match ? `"${key}" (did you mean "${match}"?)` : `"${key}"`;
+  });
+  return { unknown: described.join(", "), valid: listNames([...offered]) };
+}
+
+// Best effort: if the lookup fails, the render request goes ahead and the render
+// endpoint reports the problem (it answers a missing template with a clean 404).
+async function lookup(ctx: RequestContext, path: string): Promise<unknown> {
+  try {
+    return await apiRequest(ctx, "GET", path, undefined, { includeLockedLayers: "true" });
+  } catch {
+    return undefined;
+  }
+}
+
+// The API applies unknown layer names to nothing and still renders (and charges);
+// catching them here turns a silent mismatch into an error that lists the valid names.
+async function assertKnownLayers(ctx: RequestContext, templateId: string, args: Args): Promise<void> {
+  const layerKeys = isObject(args.layers) ? Object.keys(args.layers) : [];
+  const pages = Array.isArray(args.pages) ? args.pages : [];
+  if (pages.length > 0 && layerKeys.length > 0) {
+    throw new InputError("Pass either layers or pages, not both: when pages is set, each page is rendered with its own layers and top-level layers are ignored.");
+  }
+  if (pages.length > 0) {
+    await assertKnownPages(ctx, templateId, pages);
+    return;
+  }
+  if (layerKeys.length === 0) return;
+
+  const known = await lookup(ctx, `/v1/template/${enc(templateId)}/layers`);
+  if (!Array.isArray(known)) return;
+  const problem = unknownLayerNames(layerKeys, known as LayerInfo[]);
+  if (problem) {
+    throw new InputError(
+      `Template ${templateId} has no layer named ${problem.unknown}. Nothing was rendered. ` +
+      `Valid layer names: ${problem.valid}. Call get_template_layers to see each layer's type and current value.`,
+    );
+  }
+}
+
+async function assertKnownPages(ctx: RequestContext, templateId: string, pages: unknown[]): Promise<void> {
+  const known = await lookup(ctx, `/v1/template/${enc(templateId)}/pages`);
+  if (!Array.isArray(known) || known.length === 0) return;
+  const byName = new Map<string, PageInfo>();
+  for (const page of known as PageInfo[]) {
+    if (page.page && !byName.has(page.page)) byName.set(page.page, page);
+  }
+
+  const problems: string[] = [];
+  const requested = pages.map((page) => (isObject(page) ? page : {}));
+  const unknownPages = requested.map((page) => String(page.page ?? "")).filter((name) => !byName.has(name));
+  if (unknownPages.length > 0) {
+    problems.push(
+      `Template ${templateId} has no page named ${unknownPages.map((name) => JSON.stringify(name)).join(", ")}. ` +
+      `Valid page names: ${listNames([...byName.keys()])}.`,
+    );
+  }
+  for (const page of requested) {
+    const target = byName.get(String(page.page ?? ""));
+    if (!target || !isObject(page.layers)) continue;
+    const known = Object.entries(target.layers ?? {}).map(([name, layer]) => ({ ...layer, layer: name }));
+    const problem = unknownLayerNames(Object.keys(page.layers), known);
+    if (problem) {
+      problems.push(`Page "${page.page}" has no layer named ${problem.unknown}. Valid layer names on that page: ${problem.valid}.`);
+    }
+  }
+  if (problems.length > 0) {
+    throw new InputError(`${problems.join(" ")} Nothing was rendered. Call get_template_pages to see each page's layers.`);
+  }
+}
+
+// --- merge_renders host=false ------------------------------------------------------
+
+const kilobytes = (bytes: number) => `${Math.ceil(bytes / 1024)} KB`;
+
+function inlineFile(file: FileResponse): ToolContent {
+  if (file.bytes.byteLength > MAX_INLINE_PDF_BYTES) {
+    throw new InputError(
+      `The merged PDF is ${kilobytes(file.bytes.byteLength)}, too large to return inline (limit ${kilobytes(MAX_INLINE_PDF_BYTES)}). ` +
+      "Call merge_renders again with host set to true (the default) to get a URL to the file.",
+    );
+  }
+  const filename = /\.pdf$/i.test(file.filename) ? file.filename : "merged_renders.pdf";
+  const mimeType = file.contentType === "application/octet-stream" ? "application/pdf" : file.contentType;
+  return new ToolContent([
+    { type: "text", text: JSON.stringify({ filename, mimeType, size: file.bytes.byteLength }) },
+    {
+      type: "resource",
+      resource: {
+        uri: `templated://renders/merged/${enc(filename)}`,
+        mimeType,
+        blob: Buffer.from(file.bytes).toString("base64"),
+      },
+    },
+  ]);
 }
 
 const FONT_EXTENSIONS = ["ttf", "otf", "woff", "woff2"];
@@ -863,18 +1194,21 @@ const FONT_MIME_EXTENSIONS: Record<string, string> = {
 async function executeToolCall(
   ctx: RequestContext,
   name: string,
-  args: Record<string, unknown>
+  args: Args
 ): Promise<unknown> {
   switch (name) {
     // RENDER HANDLERS
     case "create_render": {
-      await validateTemplateInFolder(ctx, args.template as string);
-      await validateTemplateByExternalId(ctx, args.template as string);
+      const templateId = idParam(args, "template");
+      await validateTemplateInFolder(ctx, templateId);
+      await validateTemplateByExternalId(ctx, templateId);
+      await assertKnownLayers(ctx, templateId, args);
       const body: Record<string, unknown> = {
-        template: args.template,
+        template: templateId,
       };
       if (args.format) body.format = args.format;
       if (args.layers) body.layers = args.layers;
+      if (Array.isArray(args.pages) && args.pages.length > 0) body.pages = args.pages;
       if (args.transparent) body.transparent = args.transparent;
       if (args.duration) body.duration = args.duration;
       if (args.fps) body.fps = args.fps;
@@ -889,34 +1223,34 @@ async function executeToolCall(
     }
 
     case "get_render":
-      return apiRequest(ctx, "GET", `/v1/render/${args.render_id}`);
+      return apiRequest(ctx, "GET", `/v1/render/${enc(idParam(args, "render_id"))}`);
 
     case "list_renders": {
-      const params: Record<string, string> = {};
-      if (args.page !== undefined) params.page = String(args.page);
-      if (args.limit !== undefined) params.limit = String(args.limit);
+      const paged = paging(args);
+      const params = pagingParams(paged);
       const folderId = ctx.folderId;
       const externalId = ctx.externalId;
       if (externalId) params.externalId = externalId;
-      const rendersPath = folderId ? `/v1/folder/${folderId}/renders` : "/v1/renders";
-      return apiRequest(ctx, "GET", rendersPath, undefined, params);
+      const rendersPath = folderId ? `/v1/folder/${enc(folderId)}/renders` : "/v1/renders";
+      return cutToPage(await apiRequest(ctx, "GET", rendersPath, undefined, params), paged);
     }
 
     case "delete_render":
-      return apiRequest(ctx, "DELETE", `/v1/render/${args.render_id}`);
+      return apiRequest(ctx, "DELETE", `/v1/render/${enc(idParam(args, "render_id"))}`);
 
-    case "merge_renders":
-      return apiRequest(ctx, "POST", "/v1/render/merge", {
+    case "merge_renders": {
+      const result = await apiRequest(ctx, "POST", "/v1/render/merge", {
         ids: args.render_ids,
-        host: args.host ?? true,
+        host: args.host !== false,
       });
+      return result instanceof FileResponse ? inlineFile(result) : result;
+    }
 
     // TEMPLATE HANDLERS
     case "list_templates": {
-      const params: Record<string, string> = {};
+      const paged = paging(args);
+      const params = pagingParams(paged);
       if (args.query) params.query = String(args.query);
-      if (args.page !== undefined) params.page = String(args.page);
-      if (args.limit !== undefined) params.limit = String(args.limit);
       if (args.width !== undefined) params.width = String(args.width);
       if (args.height !== undefined) params.height = String(args.height);
       if (args.tags) params.tags = String(args.tags);
@@ -924,24 +1258,30 @@ async function executeToolCall(
       const folderId = ctx.folderId;
       const externalId = ctx.externalId;
       if (externalId) params.externalId = externalId;
-      const templatesPath = folderId ? `/v1/folder/${folderId}/templates` : "/v1/templates";
-      return apiRequest(ctx, "GET", templatesPath, undefined, params);
+      const templatesPath = folderId ? `/v1/folder/${enc(folderId)}/templates` : "/v1/templates";
+      return cutToPage(await apiRequest(ctx, "GET", templatesPath, undefined, params), paged);
     }
 
-    case "get_template":
-      await validateTemplateInFolder(ctx, args.template_id as string);
-      await validateTemplateByExternalId(ctx, args.template_id as string);
-      return apiRequest(ctx, "GET", `/v1/template/${args.template_id}`);
+    case "get_template": {
+      const templateId = idParam(args, "template_id");
+      await validateTemplateInFolder(ctx, templateId);
+      await validateTemplateByExternalId(ctx, templateId);
+      return apiRequest(ctx, "GET", `/v1/template/${enc(templateId)}`);
+    }
 
-    case "get_template_layers":
-      await validateTemplateInFolder(ctx, args.template_id as string);
-      await validateTemplateByExternalId(ctx, args.template_id as string);
-      return apiRequest(ctx, "GET", `/v1/template/${args.template_id}/layers`);
+    case "get_template_layers": {
+      const templateId = idParam(args, "template_id");
+      await validateTemplateInFolder(ctx, templateId);
+      await validateTemplateByExternalId(ctx, templateId);
+      return apiRequest(ctx, "GET", `/v1/template/${enc(templateId)}/layers`);
+    }
 
-    case "get_template_pages":
-      await validateTemplateInFolder(ctx, args.template_id as string);
-      await validateTemplateByExternalId(ctx, args.template_id as string);
-      return apiRequest(ctx, "GET", `/v1/template/${args.template_id}/pages`);
+    case "get_template_pages": {
+      const templateId = idParam(args, "template_id");
+      await validateTemplateInFolder(ctx, templateId);
+      await validateTemplateByExternalId(ctx, templateId);
+      return apiRequest(ctx, "GET", `/v1/template/${enc(templateId)}/pages`);
+    }
 
     case "create_template": {
       const body: Record<string, unknown> = {
@@ -956,13 +1296,14 @@ async function executeToolCall(
       const externalId = ctx.externalId;
       if (externalId) body.externalId = externalId;
       const result = await apiRequest(ctx, "POST", "/v1/template", body) as Record<string, unknown>;
-      await moveTemplateToFolder(ctx, result.id as string);
+      await moveTemplateToFolder(ctx, String(result.id));
       return result;
     }
 
     case "update_template": {
-      await validateTemplateInFolder(ctx, args.template_id as string);
-      await validateTemplateByExternalId(ctx, args.template_id as string);
+      const templateId = idParam(args, "template_id");
+      await validateTemplateInFolder(ctx, templateId);
+      await validateTemplateByExternalId(ctx, templateId);
       const body: Record<string, unknown> = {};
       if (args.name) body.name = args.name;
       if (args.description) body.description = args.description;
@@ -974,61 +1315,61 @@ async function executeToolCall(
       if (args.pages) body.pages = args.pages;
       const params: Record<string, string> = {};
       if (args.replaceLayers) params.replaceLayers = "true";
-      return apiRequest(ctx, "PUT", `/v1/template/${args.template_id}`, body, params);
+      return apiRequest(ctx, "PUT", `/v1/template/${enc(templateId)}`, body, params);
     }
 
     case "clone_template": {
-      await validateTemplateInFolder(ctx, args.template_id as string);
-      await validateTemplateByExternalId(ctx, args.template_id as string);
+      const templateId = idParam(args, "template_id");
+      await validateTemplateInFolder(ctx, templateId);
+      await validateTemplateByExternalId(ctx, templateId);
       const params: Record<string, string> = {};
       if (args.name) params.name = String(args.name);
-      const result = await apiRequest(ctx, "POST", `/v1/template/${args.template_id}/clone`, undefined, params) as Record<string, unknown>;
-      await moveTemplateToFolder(ctx, result.id as string);
+      const result = await apiRequest(ctx, "POST", `/v1/template/${enc(templateId)}/clone`, undefined, params) as Record<string, unknown>;
+      await moveTemplateToFolder(ctx, String(result.id));
       // Set externalId on the clone
       const externalId = ctx.externalId;
       if (externalId) {
-        await apiRequest(ctx, "PUT", `/v1/template/${result.id}`, { externalId });
+        await apiRequest(ctx, "PUT", `/v1/template/${enc(String(result.id))}`, { externalId });
       }
       return result;
     }
 
-    case "delete_template":
-      await validateTemplateInFolder(ctx, args.template_id as string);
-      await validateTemplateByExternalId(ctx, args.template_id as string);
-      return apiRequest(ctx, "DELETE", `/v1/template/${args.template_id}`);
+    case "delete_template": {
+      const templateId = idParam(args, "template_id");
+      await validateTemplateInFolder(ctx, templateId);
+      await validateTemplateByExternalId(ctx, templateId);
+      return apiRequest(ctx, "DELETE", `/v1/template/${enc(templateId)}`);
+    }
 
     case "list_template_renders": {
-      await validateTemplateInFolder(ctx, args.template_id as string);
-      await validateTemplateByExternalId(ctx, args.template_id as string);
-      const params: Record<string, string> = {};
-      if (args.page !== undefined) params.page = String(args.page);
-      if (args.limit !== undefined) params.limit = String(args.limit);
-      return apiRequest(ctx, "GET", `/v1/template/${args.template_id}/renders`, undefined, params);
+      const templateId = idParam(args, "template_id");
+      await validateTemplateInFolder(ctx, templateId);
+      await validateTemplateByExternalId(ctx, templateId);
+      const paged = paging(args);
+      const result = await apiRequest(ctx, "GET", `/v1/template/${enc(templateId)}/renders`, undefined, pagingParams(paged));
+      return cutToPage(result, paged);
     }
 
     // FOLDER HANDLERS
     case "list_folders": {
-      const params: Record<string, string> = {};
-      if (args.page !== undefined) params.page = String(args.page);
-      if (args.limit !== undefined) params.limit = String(args.limit);
-      return apiRequest(ctx, "GET", "/v1/folders", undefined, params);
+      // The API returns every folder in one response.
+      const folders = await apiRequest(ctx, "GET", "/v1/folders");
+      return pageLocally("folders", Array.isArray(folders) ? folders : [], paging(args));
     }
 
     case "create_folder":
       return apiRequest(ctx, "POST", "/v1/folder", { name: args.name });
 
     case "update_folder":
-      return apiRequest(ctx, "PUT", `/v1/folder/${args.folder_id}`, { name: args.name });
+      return apiRequest(ctx, "PUT", `/v1/folder/${enc(idParam(args, "folder_id"))}`, { name: args.name });
 
     case "delete_folder":
-      return apiRequest(ctx, "DELETE", `/v1/folder/${args.folder_id}`);
+      return apiRequest(ctx, "DELETE", `/v1/folder/${enc(idParam(args, "folder_id"))}`);
 
     // UPLOAD HANDLERS
     case "list_uploads": {
-      const params: Record<string, string> = {};
-      if (args.page !== undefined) params.page = String(args.page);
-      if (args.limit !== undefined) params.limit = String(args.limit);
-      return apiRequest(ctx, "GET", "/v1/uploads", undefined, params);
+      const paged = paging(args);
+      return cutToPage(await apiRequest(ctx, "GET", "/v1/uploads", undefined, pagingParams(paged)), paged);
     }
 
     case "create_upload": {
@@ -1049,10 +1390,19 @@ async function executeToolCall(
 
     // FONT HANDLERS
     case "list_fonts": {
-      const params: Record<string, string> = {};
-      if (args.page !== undefined) params.page = String(args.page);
-      if (args.limit !== undefined) params.limit = String(args.limit);
-      return apiRequest(ctx, "GET", "/v1/fonts", undefined, params);
+      // The API returns the team's fonts followed by every Google Font (about 350),
+      // without paging; filter and page here.
+      const all = await apiRequest(ctx, "GET", "/v1/fonts");
+      const query = typeof args.query === "string" ? args.query.trim().toLowerCase() : "";
+      const seen = new Set<string>();
+      const fonts = (Array.isArray(all) ? all : []).filter((font) => {
+        if (!isObject(font) || typeof font.name !== "string" || seen.has(font.name)) return false;
+        if (font.isGoogleFont === true && args.include_google_fonts !== true) return false;
+        if (query && !font.name.toLowerCase().includes(query)) return false;
+        seen.add(font.name);
+        return true;
+      });
+      return pageLocally("fonts", fonts, paging(args));
     }
 
     case "upload_font": {
@@ -1061,7 +1411,7 @@ async function executeToolCall(
       const urlExt = file.filename.includes(".") ? file.filename.slice(file.filename.lastIndexOf(".") + 1).toLowerCase() : "";
       const ext = FONT_EXTENSIONS.includes(urlExt) ? urlExt : FONT_MIME_EXTENSIONS[file.contentType];
       if (!ext) {
-        throw new Error("The URL must point to a TTF, OTF, WOFF or WOFF2 font file");
+        throw new InputError("The URL must point to a TTF, OTF, WOFF or WOFF2 font file");
       }
       file.filename = `${String(args.name).trim() || "font"}.${ext}`;
       return apiUpload(ctx, "/v1/font", file);
@@ -1075,6 +1425,6 @@ async function executeToolCall(
       return apiRequest(ctx, "GET", "/v1/account");
 
     default:
-      throw new Error(`Unknown tool: ${name}`);
+      throw new InputError(`Unknown tool: ${name}.`);
   }
 }

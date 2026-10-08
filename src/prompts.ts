@@ -1,13 +1,13 @@
 import type { GetPromptResult, Prompt } from "@modelcontextprotocol/sdk/types.js";
 
-// Server-level guidance sent at initialize. Most new connections come from people
-// who just signed up and have no templates yet; without this the model tends to
-// stop and send them to the web app instead of producing a first render.
+// Server-level guidance sent at initialize: what Templated does and the usual
+// order of calls, stated as facts. Most new connections come from accounts that
+// have no templates yet, so it also says create_template covers that case.
 export const SERVER_INSTRUCTIONS = [
-  "Templated renders images (PNG, JPG, WebP), multi-page PDFs and MP4 videos from templates.",
-  "Start with list_templates. If the account has no templates yet (common right after sign-up), do not stop or send the user to the web app: offer to design one from their description with create_template, then render it.",
-  "Before rendering, call get_template_layers and use those exact layer names as keys. Unknown keys are ignored and the render still succeeds, so a mismatch is silent.",
-  "Render one, show the URL to the user, and only then render a batch.",
+  "Templated renders images (PNG, JPG, WebP), multi-page PDFs and MP4 videos from templates: it fills a saved design with the given text, images and colors (template rendering, not AI image generation).",
+  "The usual flow is list_templates to find a template, get_template_layers to read its layer names, then create_render with those names as the keys of layers. If a layer name doesn't exist in the template, create_render renders nothing and returns the valid names.",
+  "When the account has no templates yet (common right after sign-up), create_template can design one from the user's description, so a first render doesn't require the Templated web app.",
+  "For batches, rendering one item and checking the result before rendering the rest avoids repeating a layout problem across many renders.",
   "Common sizes: Instagram post 1080x1080, story 1080x1920, link preview (OG) 1200x630, A4 landscape certificate 1754x1240.",
 ].join("\n");
 

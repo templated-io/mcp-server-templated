@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sanitizeToolResult } from "./sanitize.js";
+import { templateLayersFixture } from "./testutil/layersFixture.js";
 
 test("get_account keeps usage numbers and drops identity and plan", () => {
   const out = sanitizeToolResult("get_account", {
@@ -53,8 +54,38 @@ test("folders, uploads and fonts drop user and team ids", () => {
     { name: "Inter", isUploadedFont: true });
 });
 
-test("layers, pages and unknown tools pass through untouched", () => {
-  const layers = [{ layer: "title", type: "text", text: "Hi" }];
+test("layers, pages and unknown tools keep every field that has a value", () => {
+  const layers = [{ layer: "title", type: "text", text: "Hi", x: 0, hide: false }];
   assert.deepEqual(sanitizeToolResult("get_template_layers", layers), layers);
+  const pages = [{ page: "Square", width: 1080, layers: { title: { type: "text", text: "Hi" } } }];
+  assert.deepEqual(sanitizeToolResult("get_template_pages", pages), pages);
   assert.deepEqual(sanitizeToolResult("something_new", { any: 1 }), { any: 1 });
+});
+
+test("empty values are dropped recursively; 0 and false are kept", () => {
+  const out = sanitizeToolResult("get_template_layers", [{
+    layer: "title", type: "text", text: "", description: "", color_2: null, x: 0, y: 0, hide: false,
+    image_base64: undefined, tags: [], animation: { in: null, loop: null, out: null, start: null },
+    nested: [{ a: null, b: 1 }],
+  }]);
+  assert.deepEqual(out, [{ layer: "title", type: "text", x: 0, y: 0, hide: false, nested: [{ b: 1 }] }]);
+
+  const list = sanitizeToolResult("list_templates", [{ id: "t1", name: "Post", description: "", layers: null, pages: null, tags: [] }]);
+  assert.deepEqual(list, [{ id: "t1", name: "Post" }]);
+});
+
+test("a 47-layer get_template_layers response shrinks by more than 60% and keeps what renders need", () => {
+  const raw = templateLayersFixture();
+  const before = JSON.stringify(raw, null, 2).length; // 1.8.0: passthrough, pretty-printed
+  const sanitized = sanitizeToolResult("get_template_layers", raw) as Record<string, unknown>[];
+  const after = JSON.stringify(sanitized).length;
+  assert.ok(after < before * 0.4, `expected under 40% of ${before} chars, got ${after}`);
+
+  assert.equal(sanitized.length, raw.length);
+  for (const [i, layer] of sanitized.entries()) {
+    const original = raw[i];
+    for (const field of ["layer", "type", "text", "image_url", "html", "font_family", "font_size", "x", "y", "width", "height", "hide"]) {
+      assert.deepEqual(layer[field], original[field] ?? undefined, `${original.layer}.${field}`);
+    }
+  }
 });
