@@ -1,0 +1,14 @@
+{
+  "name": "templated",
+  "version": "1.0.0",
+  "description": "Render images (PNG, JPG, WebP), PDFs and MP4 videos from your Templated templates: social media posts, banners, Open Graph images, certificates and invoices. Includes the hosted Templated MCP server (OAuth sign-in) and skills for rendering, batch renders and designing new templates.",
+  "author": {
+    "name": "Templated",
+    "email": "support@templated.io",
+    "url": "https://templated.io/"
+  },
+  "homepage": "https://templated.io/",
+  "repository": "https://github.com/templated-io/mcp-server-templated",
+  "license": "MIT",
+  "keywords": ["templated", "templated.io", "templates", "image generation", "pdf generation", "video generation"]
+}

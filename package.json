@@ -24,6 +24,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json && chmod +x dist/index.js && npm run build:ui",
     "build:ui": "tsc -p web/tsconfig.json && node scripts/build-ui.mjs",
+    "docs:tools": "node scripts/tools-doc.mjs",
     "test": "npm run build:ui && rm -rf .test-dist && tsc -p tsconfig.test.json && node --test $(find .test-dist -name '*.test.js')",
     "dev": "tsc --watch",
     "start": "node dist/index.js",

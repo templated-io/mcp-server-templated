@@ -1,0 +1,3 @@
+interface:
+  display_name: "Render from templates"
+  short_description: "Fill a template with new text and images and render it"

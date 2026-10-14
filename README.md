@@ -67,6 +67,25 @@ For automations, use `https://mcp.templated.io/mcp?apiKey=your-api-key-here` as 
 
 **Alternative (automations):** enter `https://mcp.templated.io/mcp?apiKey=your-api-key-here` and set Authentication to **No Auth** instead.
 
+### Plugin for Cursor and Grok
+
+This repository is also a plugin that bundles the hosted MCP server with three skills:
+
+- `templated`: render from existing templates (exact layer names, batches, sizes, multi-page PDFs and merging PDFs)
+- `templated-design`: design a new template from a short brief, or fix the layout of an existing one
+- `setup`: a first-run flow that checks the account and produces a first render, including on accounts with no templates yet
+
+| File | Used by |
+|---|---|
+| `.cursor-plugin/plugin.json` | Cursor and Grok Bot (Cursor Marketplace) |
+| `.grok-plugin/plugin.json` | Grok Build (xAI plugin marketplace) |
+| `.mcp.json` | The MCP server (`https://mcp.templated.io/mcp`) |
+| `skills/` | The skills above (also packaged in the ChatGPT plugin) |
+
+No configuration is needed: the first tool call opens the Templated sign-in (OAuth), where you can also create an account. Nothing runs on your machine; the plugin only connects to the hosted server.
+
+To try it locally in Cursor, clone this repository into `~/.cursor/plugins/local/templated` and run **Developer: Reload Window**.
+
 ### Option 2: Local Server
 
 Run the MCP server locally on your machine. Requires Node.js 18+.
@@ -128,6 +147,8 @@ The remote server supports two ways to authenticate:
 - **API key** via `?apiKey=YOUR_API_KEY` on the URL or an `Authorization: Bearer YOUR_API_KEY` header — used for automations and multi-tenant scoping (`folderId`/`externalId`).
 
 ## Available Tools
+
+Full reference with inputs, permission class (read, write or sensitive write) and side effects: [docs/tools.md](docs/tools.md) (regenerate with `npm run build && npm run docs:tools`).
 
 ### Render Operations
 

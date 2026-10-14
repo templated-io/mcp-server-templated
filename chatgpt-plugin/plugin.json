@@ -1,0 +1,113 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "app-697a947e772c8191b888e4e23376bcf2",
+  "version": "2.0.0",
+  "description": "Render images (PNG, JPG, WebP), PDFs and MP4 videos from Templated templates: social media posts, banners, Open Graph images, certificates, invoices and more. Use your own templates or design a new one from a short brief, then fill its layers with new text, images and colors.",
+  "author": {
+    "name": "Templated",
+    "email": "support@templated.io",
+    "url": "https://templated.io/"
+  },
+  "homepage": "https://templated.io/",
+  "repository": "https://github.com/templated-io/mcp-server-templated",
+  "license": "MIT",
+  "keywords": [
+    "templated",
+    "templates",
+    "image generation",
+    "pdf generation",
+    "video",
+    "social media",
+    "open graph",
+    "certificates",
+    "invoices",
+    "banners"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Templated",
+        "shortDescription": "Generate images, videos & PDFs",
+        "longDescription": "Templated is an API for automated image, PDF and video generation from templates. Design a template once in the Templated editor, import it from Canva, or have ChatGPT build one from a short brief, then render on-brand images, PDFs and videos from it with new data.\n\nWith Templated in ChatGPT, you can work across your whole template workflow:\n- Create templates from a brief: describe a post, banner or certificate and ChatGPT designs a template with named layers, then renders it so you can check the result\n- Preview renders inline: finished images, PDFs and videos appear in the conversation as an interactive preview card with size, format and a download link\n- Render with your data: fill any template with new text, images, colors, QR codes and barcodes, and get PNG, JPG, WebP, PDF or MP4 files\n- Social media: Instagram posts, stories and carousels, LinkedIn posts, YouTube thumbnails and quote cards\n- Marketing creatives: banner ads, ad creatives, flyers, posters, email headers, product mockups and ecommerce product images\n- Link previews: Open Graph (OG) images for blog posts, docs and landing pages\n- Documents: certificates, invoices, receipts, menus, event tickets, badges and business cards\n- Multi-page PDFs: catalogs, reports and menus as a single PDF, with print-ready output (flattened PDF, CMYK)\n- Video: MP4 video ads and reels with animated text and images (entrance, loop and exit animations)\n- Resize one design to every format: multi-size templates keep a square post, a story and a banner in one template, and any of its sizes can be rendered\n- Batch personalized renders: one certificate, invoice or product card per name or row of a list, then merge the PDFs into a single file\n- Edit and organize: update, clone and resize templates, sort them into folders, and manage uploaded images and custom fonts\n\nRendering is deterministic template rendering, not AI image generation: the same template and data always produce the same result, ready for marketing, ecommerce, documents and automations. Templated does not generate pictures from a text prompt, edit existing photos or publish to social networks. Images used in a render must be available at a public URL, and each render counts toward your Templated account's usage.\n\nGetting started: connect Templated, sign in with your Templated account or create one during sign-in, and ask for your first design. Templates can also be fine-tuned in the Templated web editor and rendered from the chat.",
+        "developerName": "Templated",
+        "category": "Creativity",
+        "capabilities": [
+          "Interactive",
+          "Read",
+          "Write"
+        ],
+        "websiteURL": "https://templated.io/",
+        "supportURL": "https://help.templated.io",
+        "privacyPolicyURL": "https://templated.io/privacy/",
+        "termsOfServiceURL": "https://templated.io/terms/",
+        "defaultPrompt": [
+          "Make an Instagram post for my bakery's grand opening with Templated and render it as a PNG",
+          "Use Templated to make certificates for Ana Lima, John Park and Mei Chen and merge them into one PDF",
+          "Create a 1200x630 link preview in Templated for my blog post 'How we cut costs by 40%'"
+        ],
+        "brandColor": "#1477FF",
+        "composerIcon": "./assets/composer-icon.png",
+        "logo": "./assets/logo.png"
+      },
+      "onboardingSkill": "./skills/setup/SKILL.md",
+      "review": {
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Browse the templates in the connected account.",
+              "prompt": "Show me my Templated templates.",
+              "tools_triggered": "list_templates",
+              "expected_behavior": "Lists the account's templates by name with their sizes, including Menüplan, Red and Yellow Certificate Template, Yellow Orange Black Dynamic Food Instagram Post Template, Blue Twitter to Instagram Template and Quote card."
+            },
+            {
+              "description": "Render an image from an existing template with new text.",
+              "prompt": "Using my Yellow Orange Black Dynamic Food Instagram Post Template in Templated, change the headline to SUMMER SALE and the discount to 50% OFF, then render it as a PNG.",
+              "tools_triggered": "list_templates, get_template_layers, create_render",
+              "expected_behavior": "Finds the template, reads its layer names and creates one PNG render with SUMMER SALE and 50% OFF in the matching text layers. The finished image is shown in an inline preview card with its size and a download link; hosts without inline UI show the file URL."
+            },
+            {
+              "description": "Render a batch of personalized PDFs from one template and merge them into a single file.",
+              "prompt": "Make certificates for Ana Lima and John Park from my Red and Yellow Certificate Template in Templated and combine them into one PDF.",
+              "tools_triggered": "list_templates, get_template_layers, create_render, merge_renders",
+              "expected_behavior": "Reads the certificate's layers and renders one certificate per name with the name in the recipient layer. It may show the first certificate and ask to continue before rendering the second. It then merges the two renders into one two-page PDF and returns its link."
+            },
+            {
+              "description": "Design a new template from a short brief and render it, the path used when no existing template fits or the account is empty.",
+              "prompt": "Use Templated to design a 1200x630 link preview template for my blog post 'How we cut costs by 40%' and render it as a PNG.",
+              "tools_triggered": "create_template, create_render",
+              "expected_behavior": "Creates a new 1200x630 template with named layers, such as a headline containing the post title, renders it once as a PNG and shows the result. The full title is visible inside the image. list_templates and get_template_layers may also be called."
+            },
+            {
+              "description": "Render a document template as a PDF.",
+              "prompt": "Render my Menüplan template from Templated as a print-ready PDF.",
+              "tools_triggered": "list_templates, create_render",
+              "expected_behavior": "Finds the Menüplan template and creates a PDF render of it (flattened for print) without changing its content, then shows the result with a link to the PDF."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Free-form image generation from a text prompt is out of scope: Templated renders saved templates and does not generate artwork.",
+              "prompt": "Generate a picture of a cat wearing sunglasses on a beach.",
+              "expected_behavior": "No Templated tool is called. The request is handled without the plugin, or the reply explains that Templated renders templates rather than generating artwork."
+            },
+            {
+              "description": "Editing an existing photo is out of scope: Templated cannot retouch photos or remove backgrounds.",
+              "prompt": "Remove the background from this photo and make it brighter.",
+              "expected_behavior": "No Templated tool is called. The reply does not claim that Templated can edit the photo."
+            },
+            {
+              "description": "Publishing to social networks is out of scope: Templated has no tool that posts to social accounts.",
+              "prompt": "Post this image to my Instagram account.",
+              "expected_behavior": "No Templated tool is called. The reply explains that Templated cannot publish to Instagram."
+            }
+          ]
+        },
+        "commerce": false,
+        "commerce_description": "Templated does not sell products or process payments in ChatGPT or Codex."
+      },
+      "publication": {
+        "release_notes": "Version 2.0.0. Adds three skills: rendering from templates (exact layer names, checking the first render before a batch, sizes, multi-page PDFs and merging PDFs), designing a new template from a short brief, and a setup flow that checks the account and produces a first render, including on accounts with no templates yet. Finished renders appear in an inline preview card with a download link. New starter prompts and a rewritten description that states Templated renders templates rather than generating images. Tool results are more compact, and unknown layer names are reported instead of being ignored."
+      }
+    }
+  }
+}
