@@ -42,6 +42,28 @@ test("validator: 200 is valid and cached", async () => {
   assert.equal(f.calls(), 1);
 });
 
+test("validator: keeps the team the API reports for a valid token", async () => {
+  const teamId = "2fd904ee-9ca8-4c57-9536-e252dc05caa1";
+  const v = new TokenValidator({
+    apiBaseUrl: "https://api.x",
+    fetchFn: (async () => new Response(JSON.stringify({ teamId, apiUsage: 3 }), { status: 200 })) as typeof fetch,
+  });
+  assert.equal(v.teamId("tok"), undefined);
+  assert.equal(await v.validate("tok"), "valid");
+  assert.equal(v.teamId("tok"), teamId);
+  assert.equal(v.teamId("other"), undefined);
+
+  // An older API without teamId, or anything that isn't a team id, leaves it unknown
+  for (const body of ["{}", JSON.stringify({ teamId: "x\ny" }), "not json"]) {
+    const old = new TokenValidator({
+      apiBaseUrl: "https://api.x",
+      fetchFn: (async () => new Response(body, { status: 200 })) as typeof fetch,
+    });
+    assert.equal(await old.validate("tok"), "valid");
+    assert.equal(old.teamId("tok"), undefined);
+  }
+});
+
 test("validator: 401/403/404 are invalid", async () => {
   for (const status of [401, 403, 404]) {
     const v = new TokenValidator({ apiBaseUrl: "https://api.x", fetchFn: fetchReturning(status).fn });

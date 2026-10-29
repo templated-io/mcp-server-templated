@@ -5,13 +5,13 @@ import { AddressInfo } from "net";
 import { createHttpServer } from "./http.js";
 import { loadConfig } from "./config.js";
 import { TokenValidator } from "./auth.js";
-import type { ToolCallRecord } from "./usage.js";
+import type { InitializeRecord, ToolCallRecord } from "./usage.js";
 
 let server: http.Server;
 let base: string;
 
 before(async () => {
-  server = createHttpServer({ logToolCall: () => {} });
+  server = createHttpServer({ logToolCall: () => {}, logInitialize: () => {} });
   await new Promise<void>((r) => server.listen(0, () => r()));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
@@ -140,15 +140,18 @@ test("no credential -> 401 (no longer reaches the MCP layer)", async () => {
 
 test("tool calls are logged with the client name from an earlier initialize request", async (t) => {
   const records: ToolCallRecord[] = [];
+  const inits: InitializeRecord[] = [];
   const lines: string[] = [];
+  const teamId = "2fd904ee-9ca8-4c57-9536-e252dc05caa1";
   const validator = new TokenValidator({
     apiBaseUrl: "https://api.x",
-    fetchFn: (async () => ({ status: 200 })) as unknown as typeof fetch,
+    fetchFn: (async () => new Response(JSON.stringify({ teamId }), { status: 200 })) as typeof fetch,
   });
   const s = createHttpServer({
     config: loadConfig({} as NodeJS.ProcessEnv),
     validator,
     logToolCall: (record) => { records.push(record); lines.push(JSON.stringify(record)); },
+    logInitialize: (record) => { inits.push(record); lines.push(JSON.stringify(record)); },
   });
   await new Promise<void>((r) => s.listen(0, () => r()));
   const b = `http://127.0.0.1:${(s.address() as AddressInfo).port}`;
@@ -178,12 +181,15 @@ test("tool calls are logged with the client name from an earlier initialize requ
   const other = await fetch(`${b}/mcp`, { method: "POST", headers: { ...headers, "User-Agent": "Claude-User" }, body: toolCallBody(3) });
   await other.text();
 
+  assert.deepEqual(inits, [{ client: { name: "openai-mcp", version: "1.0.0" }, team_id: teamId }]);
   assert.equal(records.length, 2);
   assert.deepEqual(records[0].client, { name: "openai-mcp", version: "1.0.0" });
   assert.equal(records[0].tool, "get_account");
   assert.equal(records[0].outcome, "ok");
+  assert.equal(records[0].team_id, teamId);
   assert.equal(records[1].client, undefined);
   assert.equal(records[1].user_agent, "Claude-User");
+  assert.equal(records[1].team_id, teamId);
   assert.ok(lines.every((l) => !l.includes("tok-openai")), "the bearer token is never logged");
 });
 
@@ -196,6 +202,7 @@ test("over HTTP the render card gets the public origin as ui.domain for ChatGPT 
     config: loadConfig({ MCP_PUBLIC_URL: "https://mcp.example.test" } as NodeJS.ProcessEnv),
     validator,
     logToolCall: () => {},
+    logInitialize: () => {},
   });
   await new Promise<void>((r) => s.listen(0, () => r()));
   const b = `http://127.0.0.1:${(s.address() as AddressInfo).port}`;

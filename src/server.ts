@@ -26,6 +26,8 @@ export interface ServerOptions {
   clientInfo?: () => ClientInfo | undefined;
   // Logged when the client is unknown, so calls can still be told apart.
   userAgent?: string;
+  // Team behind the credential (from the token check), so log lines can be joined to accounts.
+  teamId?: string;
   // Public URL of the hosted server (MCP_PUBLIC_URL); the UI resource's dedicated
   // origin in ChatGPT. Absent for local stdio servers.
   publicUrl?: string;
@@ -114,6 +116,7 @@ export function createServer(ctx: RequestContext, options: ServerOptions = {}): 
       ...(outcome.status !== undefined && { status: outcome.status }),
       ...(outcome.error_type && { error_type: outcome.error_type }),
       ...(info ? { client: info } : options.userAgent ? { user_agent: options.userAgent } : {}),
+      ...(options.teamId && { team_id: options.teamId }),
       duration_ms: Date.now() - started,
     };
     try {

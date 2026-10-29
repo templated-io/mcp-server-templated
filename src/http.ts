@@ -5,7 +5,10 @@ import { createServer } from "./server.js";
 import { loadConfig, McpConfig } from "./config.js";
 import { extractToken, wwwAuthenticate, TokenValidator } from "./auth.js";
 import { protectedResourceMetadata, AuthServerMetadataProxy } from "./wellKnown.js";
-import { clean, ClientRegistry, connectionKey, initializeClientInfo, logToolCall, ToolCallLogger } from "./usage.js";
+import {
+  clean, ClientRegistry, connectionKey, initializeClientInfo, isInitialize,
+  InitializeLogger, logInitialize, logToolCall, ToolCallLogger,
+} from "./usage.js";
 
 export interface HttpServerOptions {
   config?: McpConfig;
@@ -13,6 +16,7 @@ export interface HttpServerOptions {
   asMetadataProxy?: AuthServerMetadataProxy;
   clients?: ClientRegistry;
   logToolCall?: ToolCallLogger;
+  logInitialize?: InitializeLogger;
 }
 
 export function createHttpServer(opts: HttpServerOptions = {}): http.Server {
@@ -21,6 +25,7 @@ export function createHttpServer(opts: HttpServerOptions = {}): http.Server {
   const asProxy = opts.asMetadataProxy ?? new AuthServerMetadataProxy({ apiBaseUrl: cfg.apiBaseUrl });
   const clients = opts.clients ?? new ClientRegistry();
   const onToolCall = opts.logToolCall ?? logToolCall;
+  const onInitialize = opts.logInitialize ?? logInitialize;
 
   return http.createServer(async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -103,10 +108,11 @@ export function createHttpServer(opts: HttpServerOptions = {}): http.Server {
       const ctx = contextFromRequest(url, token);
       const userAgent = clean(req.headers["user-agent"]);
       const key = connectionKey(token, userAgent);
+      const teamId = validator.teamId(token);
 
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       const server = createServer(ctx, {
-        onToolCall, clientInfo: () => clients.lookup(key), userAgent, publicUrl: cfg.publicUrl, appUrl: cfg.appUrl,
+        onToolCall, clientInfo: () => clients.lookup(key), userAgent, teamId, publicUrl: cfg.publicUrl, appUrl: cfg.appUrl,
       });
       res.on("close", () => {
         transport.close();
@@ -120,6 +126,16 @@ export function createHttpServer(opts: HttpServerOptions = {}): http.Server {
         transport.onmessage = (message, extra) => {
           const info = initializeClientInfo(message);
           if (info) clients.remember(key, info);
+          if (isInitialize(message)) {
+            try {
+              onInitialize({
+                ...(info ? { client: info } : userAgent ? { user_agent: userAgent } : {}),
+                ...(teamId && { team_id: teamId }),
+              });
+            } catch {
+              // logging never fails a request
+            }
+          }
           deliver?.(message, extra);
         };
         await transport.handleRequest(req, res);

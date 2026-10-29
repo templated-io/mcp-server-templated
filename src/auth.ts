@@ -16,7 +16,23 @@ export function wwwAuthenticate(cfg: McpConfig, invalid = false): string {
 
 export type ValidationResult = "valid" | "invalid" | "unavailable";
 
-interface CacheEntry { result: "valid" | "invalid"; checkedAt: number }
+interface CacheEntry { result: "valid" | "invalid"; checkedAt: number; teamId?: string }
+
+const TEAM_ID = /^[0-9a-f-]{36}$/i;
+
+// /v1/account names the token's team, which log lines carry so they can be joined to accounts.
+async function teamIdOf(res: Response): Promise<string | undefined> {
+  try {
+    const body = (await res.json()) as { teamId?: unknown } | null;
+    return typeof body?.teamId === "string" && TEAM_ID.test(body.teamId) ? body.teamId : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function cacheKey(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
 
 export class TokenValidator {
   private cache = new Map<string, CacheEntry>();
@@ -44,7 +60,7 @@ export class TokenValidator {
   }
 
   async validate(token: string): Promise<ValidationResult> {
-    const key = createHash("sha256").update(token).digest("hex");
+    const key = cacheKey(token);
     const entry = this.cache.get(key);
     const now = this.now();
     if (entry) {
@@ -52,6 +68,7 @@ export class TokenValidator {
       if (now - entry.checkedAt < ttl) return entry.result;
     }
     let status: number | null = null;
+    let teamId: string | undefined;
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -61,26 +78,32 @@ export class TokenValidator {
           signal: controller.signal,
         });
         status = res.status;
+        if (status === 200) teamId = await teamIdOf(res);
       } finally {
         clearTimeout(timer);
       }
     } catch {
       status = null;
     }
-    if (status === 200) return this.store(key, "valid", now);
+    if (status === 200) return this.store(key, "valid", now, teamId);
     if (status === 401 || status === 403 || status === 404) return this.store(key, "invalid", now);
     // Upstream unavailable: reuse a recent stale entry rather than logging users out.
     if (entry && now - entry.checkedAt <= this.staleMaxMs) return entry.result;
     return "unavailable";
   }
 
-  private store(key: string, result: "valid" | "invalid", now: number): ValidationResult {
+  // The team of a token that validate() accepted; undefined if the API didn't say.
+  teamId(token: string): string | undefined {
+    return this.cache.get(cacheKey(token))?.teamId;
+  }
+
+  private store(key: string, result: "valid" | "invalid", now: number, teamId?: string): ValidationResult {
     if (this.cache.size >= this.maxEntries && !this.cache.has(key)) {
       const oldest = this.cache.keys().next().value;
       if (oldest !== undefined) this.cache.delete(oldest);
     }
     this.cache.delete(key);
-    this.cache.set(key, { result, checkedAt: now });
+    this.cache.set(key, teamId ? { result, checkedAt: now, teamId } : { result, checkedAt: now });
     return result;
   }
 }

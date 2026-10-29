@@ -16,10 +16,20 @@ export interface ToolCallRecord {
   error_type?: "api" | "invalid_input" | "internal";
   client?: ClientInfo;
   user_agent?: string;
+  team_id?: string;
   duration_ms: number;
 }
 
 export type ToolCallLogger = (record: ToolCallRecord) => void;
+
+// One per initialize handshake, so a connection that never calls a tool still shows up.
+export interface InitializeRecord {
+  client?: ClientInfo;
+  user_agent?: string;
+  team_id?: string;
+}
+
+export type InitializeLogger = (record: InitializeRecord) => void;
 
 const MAX_FIELD_LENGTH = 80;
 
@@ -39,11 +49,14 @@ export function clientInfoOf(value: unknown): ClientInfo | undefined {
   return version ? { name, version } : { name };
 }
 
+export function isInitialize(message: unknown): boolean {
+  return !!message && typeof message === "object" && (message as { method?: unknown }).method === "initialize";
+}
+
 // The clientInfo of an initialize request, or undefined for any other message.
 export function initializeClientInfo(message: unknown): ClientInfo | undefined {
-  if (!message || typeof message !== "object") return undefined;
-  const { method, params } = message as { method?: unknown; params?: { clientInfo?: unknown } };
-  return method === "initialize" ? clientInfoOf(params?.clientInfo) : undefined;
+  if (!isInitialize(message)) return undefined;
+  return clientInfoOf((message as { params?: { clientInfo?: unknown } }).params?.clientInfo);
 }
 
 // Hash of the credential plus user agent. The OAuth token is the team's API key,
@@ -89,4 +102,8 @@ export class ClientRegistry {
 // One JSON line per tool call on stdout.
 export function logToolCall(record: ToolCallRecord): void {
   console.log(JSON.stringify({ event: "mcp_tool_call", ts: new Date().toISOString(), ...record }));
+}
+
+export function logInitialize(record: InitializeRecord): void {
+  console.log(JSON.stringify({ event: "mcp_initialize", ts: new Date().toISOString(), ...record }));
 }
