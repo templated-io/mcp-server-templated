@@ -937,10 +937,20 @@ type Args = Record<string, unknown>;
 const isObject = (value: unknown): value is Args =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-// A result that is already MCP content (an embedded file) instead of JSON data.
+// A result that is already MCP content (an embedded file, a message for the model) instead of JSON data.
 export class ToolContent {
   constructor(readonly content: CallToolResult["content"]) {}
 }
+
+// A brand-new account answers list_templates with nothing, and for 19 of the 41 new ChatGPT users
+// who made a tool call (Oct 29 to Nov 9, 2026) that was the only call, with no template designed.
+const NO_TEMPLATES_YET = new ToolContent([{
+  type: "text",
+  text: JSON.stringify({
+    templates: [],
+    message: "This account has no templates yet. To make what the user asked for, call create_template with a design based on their description, then call create_render with the new template's id.",
+  }),
+}]);
 
 // Where the model can look up a valid value for an ID parameter.
 const ID_HINTS: Record<string, string> = {
@@ -1259,7 +1269,10 @@ async function executeToolCall(
       const externalId = ctx.externalId;
       if (externalId) params.externalId = externalId;
       const templatesPath = folderId ? `/v1/folder/${enc(folderId)}/templates` : "/v1/templates";
-      return cutToPage(await apiRequest(ctx, "GET", templatesPath, undefined, params), paged);
+      const templates = cutToPage(await apiRequest(ctx, "GET", templatesPath, undefined, params), paged);
+      const narrowed = paged.page > 0 || args.query || args.width !== undefined || args.height !== undefined || args.tags || folderId || externalId;
+      if (Array.isArray(templates) && templates.length === 0 && !narrowed) return NO_TEMPLATES_YET;
+      return templates;
     }
 
     case "get_template": {

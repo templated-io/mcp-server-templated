@@ -367,6 +367,26 @@ test("every list tool caps limit at 100 and sends an explicit default of 25", as
   }
 });
 
+test("list_templates on an account with no templates points the model at create_template", async () => {
+  await withApi(() => [], async () => {
+    const out = await handleToolCall(ctx("k"), "list_templates", {});
+    assert.ok(out instanceof ToolContent);
+    const body = JSON.parse((out.content[0] as { text: string }).text);
+    assert.deepEqual(body.templates, []);
+    assert.match(body.message, /create_template/);
+  });
+});
+
+test("list_templates stays a plain empty list when a filter, a later page or a scope explains it", async () => {
+  await withApi(() => [], async () => {
+    for (const args of [{ query: "x" }, { width: 1080 }, { height: 1080 }, { tags: "a" }, { page: 1 }]) {
+      assert.deepEqual(await handleToolCall(ctx("k"), "list_templates", args), [], JSON.stringify(args));
+    }
+    assert.deepEqual(await handleToolCall(ctx("k", "fold-1"), "list_templates", {}), [], "folder");
+    assert.deepEqual(await handleToolCall({ apiKey: "k", folderId: null, externalId: "e" }, "list_templates", {}), [], "external id");
+  });
+});
+
 test("list results are cut to the page size when the API ignores paging", async () => {
   const templates = Array.from({ length: 40 }, (_, i) => ({ id: `t${i}`, name: `T${i}` }));
   await withApi(() => templates, async () => {
