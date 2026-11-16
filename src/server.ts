@@ -130,7 +130,9 @@ export function createServer(ctx: RequestContext, options: ServerOptions = {}): 
     const { name, arguments: args } = request.params;
     const started = Date.now();
     try {
-      const result = await handleToolCall(ctx, name, args);
+      // Plan-limit errors are worded per client. Over stateless HTTP a client whose initialize
+      // was not seen is known by its user agent only, as in the mcp_tool_call log line.
+      const result = await handleToolCall({ ...ctx, clientName: client()?.name ?? options.userAgent }, name, args);
       const response: CallToolResult = result instanceof ToolContent
         ? { content: result.content }
         : { content: [{ type: "text", text: JSON.stringify(result) }] };

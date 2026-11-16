@@ -4,11 +4,42 @@ import type { RemoteFile } from "./remote.js";
 
 export const API_BASE_URL = loadConfig().apiBaseUrl;
 
-// Billing and plan state stays out of the model's context: the API phrases
-// quota and plan errors as upgrade prompts, which an AI client must not relay.
+// The API phrases quota and plan errors as upgrade prompts. Its wording never reaches
+// the model. Claude clients get one of the fixed messages below, which name the limit
+// and the upgrade page. Every other client gets NOT_AVAILABLE, and that text must stay
+// as it is: OpenAI's app rules keep billing and plan state out of the conversation, and
+// the tool reference (docs/tools.md) says the limit message does not promote plans.
 const BILLING_PATTERN = /upgrade|plan\b|credits?\b|payment|billing|suspend|subscri/i;
 const NOT_AVAILABLE =
   "This action is not available on the connected Templated account right now (usage limit reached or feature not enabled). Check the account at app.templated.io.";
+
+const UPGRADE_URL = "https://app.templated.io/upgrade";
+const TEMPLATE_LIMIT_REACHED =
+  `The connected Templated account has reached the template limit of its current plan. The options are: upgrade the plan at ${UPGRADE_URL}, free a slot by deleting a template that is no longer needed (delete_template), or change an existing template with update_template instead of creating a new one.`;
+const CREDITS_USED_UP =
+  `The connected Templated account has used all the render credits of its current plan. The plan can be upgraded at ${UPGRADE_URL}. Retrying will not work until the account has render credits again.`;
+// Some credits are left, but fewer than this render costs (several pages, or a video).
+const NOT_ENOUGH_CREDITS =
+  `The connected Templated account does not have enough render credits left on its current plan for this render (get_account shows the usage). The plan can be upgraded at ${UPGRADE_URL}. Retrying the same render will not work until the account has more render credits.`;
+const PLAN_RESTRICTION =
+  `This action is not available on the current plan of the connected Templated account: a limit of the plan was reached, or the plan does not include this feature. The plan can be upgraded at ${UPGRADE_URL}.`;
+
+// A past-due payment and suspended API access also match BILLING_PATTERN, but an
+// upgrade lifts neither, so they keep the neutral message for every client.
+const ACCOUNT_STANDING_PATTERN = /past due|suspend/i;
+
+// Claude clients report names such as "Anthropic/ClaudeAI", "claude-code" and "claude-ai";
+// their user agents start with "Claude-User" or "claude-code/". A client that is not known
+// does not match, so it gets the neutral message.
+const isClaudeClient = (clientName: string | undefined) => /^(anthropic|claude)/i.test(clientName ?? "");
+
+// Which limit a billing error is about, going by the API's own wording.
+function planLimitMessage(detail: string): string {
+  if (/template limit/i.test(detail)) return TEMPLATE_LIMIT_REACHED;
+  if (/quota exceeded/i.test(detail)) return CREDITS_USED_UP;
+  if (/insufficient credits/i.test(detail)) return NOT_ENOUGH_CREDITS;
+  return PLAN_RESTRICTION;
+}
 
 // Bodies that only restate the status code give the model nothing to act on.
 const GENERIC_DETAILS = new Set([
@@ -53,10 +84,13 @@ const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1
 const idWord = (target: ErrorTarget) => (target.kind === "font" ? "names" : "IDs");
 
 // Turns an API failure into a message that tells the model what to do next.
-export function describeApiError(status: number, body: string, target?: ErrorTarget, retryAfter?: string | null): string {
+export function describeApiError(status: number, body: string, target?: ErrorTarget, retryAfter?: string | null, clientName?: string): string {
   const detail = detailOf(body);
   if (status === 402 || BILLING_PATTERN.test(detail)) {
-    return NOT_AVAILABLE;
+    // The API answers a plan limit with 403. Another status that matches is an error
+    // echoing such a word (a template named "Payment plan" sent as the ID), not a limit.
+    const planLimit = (status === 402 || status === 403) && !ACCOUNT_STANDING_PATTERN.test(detail);
+    return planLimit && isClaudeClient(clientName) ? planLimitMessage(detail) : NOT_AVAILABLE;
   }
   const http = `(HTTP ${status})`;
   const specific = GENERIC_DETAILS.has(detail.toLowerCase()) ? "" : detail;
@@ -101,14 +135,15 @@ export class ApiError extends Error {
     readonly body: string,
     readonly retryAfter?: string | null,
     target?: ErrorTarget,
+    readonly clientName?: string,
   ) {
-    super(describeApiError(status, body, target, retryAfter));
+    super(describeApiError(status, body, target, retryAfter, clientName));
     this.name = "ApiError";
   }
 
   // Re-describes the error once the caller knows which item the request was about.
   about(target: ErrorTarget | undefined): ApiError {
-    return target ? new ApiError(this.status, this.body, this.retryAfter, target) : this;
+    return target ? new ApiError(this.status, this.body, this.retryAfter, target, this.clientName) : this;
   }
 }
 
@@ -151,10 +186,10 @@ function buildUrl(path: string, queryParams?: Record<string, string>): string {
   return url;
 }
 
-async function readResponse(response: Response): Promise<unknown> {
+async function readResponse(ctx: RequestContext, response: Response): Promise<unknown> {
   if (!response.ok) {
     const errorText = await response.text();
-    throw new ApiError(response.status, errorText, response.headers?.get("retry-after"));
+    throw new ApiError(response.status, errorText, response.headers?.get("retry-after"), undefined, ctx.clientName);
   }
   const contentType = response.headers?.get("content-type")?.split(";")[0].trim().toLowerCase() ?? "";
   if (FILE_TYPES.has(contentType)) {
@@ -193,7 +228,7 @@ export async function apiRequest(
   }
 
   const response = await fetch(buildUrl(path, queryParams), options);
-  return readResponse(response);
+  return readResponse(ctx, response);
 }
 
 // multipart/form-data upload; fetch sets the boundary header itself.
@@ -214,7 +249,7 @@ export async function apiUpload(
     headers: { "Authorization": `Bearer ${apiKey}` },
     body: form,
   });
-  return readResponse(response);
+  return readResponse(ctx, response);
 }
 
 const enc = encodeURIComponent;

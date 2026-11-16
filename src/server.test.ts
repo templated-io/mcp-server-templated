@@ -90,6 +90,62 @@ test("each tool call is logged with the client from the handshake, outcome and d
   assert.doesNotMatch(logged, /Private user text/, "no user content in logs");
 });
 
+test("plan-limit errors name the limit and the upgrade link for Claude clients and stay neutral for every other client", async () => {
+  const refusal = (error: string) => () => new Response(JSON.stringify({ error }), { status: 403 });
+  const run = async (options: ServerOptions, clientName: string) => {
+    const records: ToolCallRecord[] = [];
+    const { client, close } = await connect({ ...options, onToolCall: (r) => records.push(r) }, clientName);
+    try {
+      const template = await withFetch(refusal("You've reached your template limit. Upgrade your plan to create more templates."), () =>
+        client.callTool({ name: "create_template", arguments: { name: "Post", width: 1080, height: 1080 } }));
+      const render = await withFetch(refusal("API quota exceeded. Upgrade your plan to generate more renders."), () =>
+        client.callTool({ name: "create_render", arguments: { template: "tpl-1" } }));
+      assert.equal(template.isError, true);
+      assert.equal(render.isError, true);
+      // The log line is the same whatever the wording
+      assert.deepEqual(
+        records.map(({ tool, outcome, status, error_type }) => ({ tool, outcome, status, error_type })),
+        [
+          { tool: "create_template", outcome: "error", status: 403, error_type: "api" },
+          { tool: "create_render", outcome: "error", status: 403, error_type: "api" },
+        ],
+      );
+      const [templateText, renderText] = [template, render].map((result) => (result.content as { text: string }[])[0].text);
+      return { templateText, renderText };
+    } finally {
+      await close();
+    }
+  };
+  const neutral = /^Error: This action is not available on the connected Templated account right now/;
+  const assertNeutral = ({ templateText, renderText }: { templateText: string; renderText: string }) => {
+    for (const text of [templateText, renderText]) {
+      assert.match(text, neutral);
+      assert.doesNotMatch(text, /upgrade|credits|template limit/i);
+    }
+  };
+  const assertNamesTheLimit = ({ templateText, renderText }: { templateText: string; renderText: string }) => {
+    assert.match(templateText, /^Error: The connected Templated account has reached the template limit of its current plan/);
+    assert.match(templateText, /delete_template/);
+    assert.match(templateText, /update_template/);
+    assert.match(renderText, /^Error: The connected Templated account has used all the render credits of its current plan/);
+    assert.match(renderText, /Retrying will not work/);
+    for (const text of [templateText, renderText]) {
+      assert.ok(text.includes("https://app.templated.io/upgrade"));
+    }
+  };
+
+  assertNamesTheLimit(await run({}, "Anthropic/ClaudeAI"));
+  assertNamesTheLimit(await run({}, "claude-code"));
+  assertNeutral(await run({}, "openai-mcp"));
+  assertNeutral(await run({}, "Cursor"));
+  // Over stateless HTTP a tool call can arrive with no known handshake (restart, another
+  // instance): the user agent then stands in for the client name, as it does in the log line.
+  assertNamesTheLimit(await run({ userAgent: "Claude-User" }, ""));
+  assertNeutral(await run({ userAgent: "openai-mcp/1.0.0" }, ""));
+  // Neither a handshake nor a user agent: not known to be Claude, so neutral.
+  assertNeutral(await run({}, ""));
+});
+
 test("server instructions describe the flow without steering or documenting silent failures", () => {
   assert.doesNotMatch(SERVER_INSTRUCTIONS, /Unknown keys are ignored/);
   assert.doesNotMatch(SERVER_INSTRUCTIONS, /do not stop|send the user/i);

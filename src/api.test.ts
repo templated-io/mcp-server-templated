@@ -57,13 +57,123 @@ const spring = (status: number, error: string) =>
   JSON.stringify({ timestamp: "2026-10-08T16:07:24Z", status, error, path: "/v1/template/x" });
 const template = (id: string) => ({ kind: "template" as const, ids: [id], listTool: "list_templates" });
 
-test("billing and plan errors from the API are replaced by a neutral message", () => {
-  const quota = describeApiError(403, JSON.stringify({ error: "Insufficient credits. This render requires 2 credits, but you only have 1 remaining. Upgrade your plan to generate more renders." }));
-  assert.equal(quota, NOT_AVAILABLE);
-  assert.doesNotMatch(quota, /upgrade|credits|payment/i);
-  assert.equal(describeApiError(403, JSON.stringify({ error: "Please upgrade your account to a paid plan to upload fonts." }), template("t1")), NOT_AVAILABLE);
-  const payment = describeApiError(402, "Payment Required");
-  assert.equal(payment, NOT_AVAILABLE, "a 402 must not leak the status code either");
+// Plan-limit bodies as the API words them.
+const API_TEMPLATE_LIMIT = JSON.stringify({ error: "You've reached your template limit. Upgrade your plan to create more templates." });
+const API_QUOTA_EXCEEDED = JSON.stringify({ error: "API quota exceeded. Upgrade your plan to generate more renders." });
+const API_INSUFFICIENT_CREDITS = JSON.stringify({ error: "Insufficient credits. This render requires 2 credits, but you only have 1 remaining. Upgrade your plan to generate more renders." });
+const API_PAID_FONTS = JSON.stringify({ error: "Please upgrade your account to a paid plan to upload fonts." });
+
+const UPGRADE_URL = "https://app.templated.io/upgrade";
+const TEMPLATE_LIMIT_REACHED =
+  "The connected Templated account has reached the template limit of its current plan. The options are: upgrade the plan at https://app.templated.io/upgrade, free a slot by deleting a template that is no longer needed (delete_template), or change an existing template with update_template instead of creating a new one.";
+const CREDITS_USED_UP =
+  "The connected Templated account has used all the render credits of its current plan. The plan can be upgraded at https://app.templated.io/upgrade. Retrying will not work until the account has render credits again.";
+const NOT_ENOUGH_CREDITS =
+  "The connected Templated account does not have enough render credits left on its current plan for this render (get_account shows the usage). The plan can be upgraded at https://app.templated.io/upgrade. Retrying the same render will not work until the account has more render credits.";
+const PLAN_RESTRICTION =
+  "This action is not available on the current plan of the connected Templated account: a limit of the plan was reached, or the plan does not include this feature. The plan can be upgraded at https://app.templated.io/upgrade.";
+
+// Client names and user agents as the hosted server's logs show them. Only Claude clients
+// are told about the plan; a client that is not known counts as not Claude.
+const CLAUDE_CLIENTS = ["Anthropic/ClaudeAI", "Anthropic/Toolbox", "claude-code", "claude-ai (via mcp-remote 0.16.5)", "Claude-User", "claude-code/2.1.309 (cli)"];
+const NEUTRAL_CLIENTS = ["openai-mcp", "openai-mcp (Codex)", "openai-mcp/1.0.0", "codex-mcp-client", "Cursor", "cursor-vscode", "mcp", undefined];
+
+test("clients other than Claude keep the neutral message for billing and plan errors", () => {
+  for (const client of NEUTRAL_CLIENTS) {
+    for (const body of [API_TEMPLATE_LIMIT, API_QUOTA_EXCEEDED, API_INSUFFICIENT_CREDITS, API_PAID_FONTS]) {
+      const message = describeApiError(403, body, undefined, undefined, client);
+      assert.equal(message, NOT_AVAILABLE);
+      assert.doesNotMatch(message, /upgrade|credits|payment/i);
+    }
+    assert.equal(describeApiError(403, API_PAID_FONTS, template("t1"), undefined, client), NOT_AVAILABLE);
+    const payment = describeApiError(402, "Payment Required", undefined, undefined, client);
+    assert.equal(payment, NOT_AVAILABLE, "a 402 must not leak the status code either");
+  }
+});
+
+test("Claude clients are told the template limit was reached, with the upgrade link and two ways around it", () => {
+  for (const client of CLAUDE_CLIENTS) {
+    const message = describeApiError(403, API_TEMPLATE_LIMIT, undefined, undefined, client);
+    assert.equal(message, TEMPLATE_LIMIT_REACHED);
+    assert.match(message, /template limit of its current plan/);
+    assert.ok(message.includes(UPGRADE_URL));
+    assert.match(message, /delete_template/);
+    assert.match(message, /update_template/);
+  }
+});
+
+test("Claude clients are told the render credits ran out, with the upgrade link and that retrying will not work", () => {
+  for (const client of CLAUDE_CLIENTS) {
+    // create_render names its template, so these errors also carry a target
+    const usedUp = describeApiError(403, API_QUOTA_EXCEEDED, template("tpl-1"), undefined, client);
+    assert.equal(usedUp, CREDITS_USED_UP);
+    assert.match(usedUp, /used all the render credits of its current plan/);
+    assert.ok(usedUp.includes(UPGRADE_URL));
+    assert.match(usedUp, /Retrying will not work/);
+
+    // Some credits are left, but fewer than this render costs
+    const short = describeApiError(403, API_INSUFFICIENT_CREDITS, template("tpl-1"), undefined, client);
+    assert.equal(short, NOT_ENOUGH_CREDITS);
+    assert.ok(short.includes(UPGRADE_URL));
+    assert.match(short, /Retrying the same render will not work/);
+    assert.doesNotMatch(short, /\d/, "the credit counts in the API body are not passed on");
+  }
+});
+
+test("other plan restrictions get one generic message with the upgrade link, for Claude clients", () => {
+  for (const client of CLAUDE_CLIENTS) {
+    assert.equal(describeApiError(403, API_PAID_FONTS, undefined, undefined, client), PLAN_RESTRICTION);
+    assert.equal(describeApiError(402, "Payment Required", undefined, undefined, client), PLAN_RESTRICTION, "a 402 must not leak the status code either");
+  }
+  assert.ok(PLAN_RESTRICTION.includes(UPGRADE_URL));
+});
+
+test("plan-limit messages are fixed strings: nothing else in the API body reaches the model", () => {
+  const leaky = (reason: string) => JSON.stringify({ error: `${reason} Owner jane@example.com is on the Gold plan at $99/month. Upgrade your plan.` });
+  assert.equal(describeApiError(403, leaky("You've reached your template limit (3 of 3)."), undefined, undefined, "Anthropic/ClaudeAI"), TEMPLATE_LIMIT_REACHED);
+  assert.equal(describeApiError(403, leaky("API quota exceeded."), undefined, undefined, "Anthropic/ClaudeAI"), CREDITS_USED_UP);
+  assert.equal(describeApiError(403, leaky("Insufficient credits."), undefined, undefined, "Anthropic/ClaudeAI"), NOT_ENOUGH_CREDITS);
+  assert.equal(describeApiError(403, leaky("This feature is not included."), undefined, undefined, "Anthropic/ClaudeAI"), PLAN_RESTRICTION);
+});
+
+test("past-due and suspended accounts keep the neutral message for every client: an upgrade does not lift them", () => {
+  const pastDue = JSON.stringify({ error: "Your payment method on file is past due. Please update your payment method to continue or contact support at support@templated.io." });
+  const suspended = JSON.stringify({ error: "Your API access has been suspended. Please contact support@templated.io." });
+  for (const client of [...NEUTRAL_CLIENTS, ...CLAUDE_CLIENTS]) {
+    assert.equal(describeApiError(403, pastDue, undefined, undefined, client), NOT_AVAILABLE);
+    assert.equal(describeApiError(403, suspended, template("t1"), undefined, client), NOT_AVAILABLE);
+  }
+});
+
+test("a billing word echoed by an error that is not a 402 or 403 never becomes an upgrade message", () => {
+  // A template name sent as the ID comes back in the 404; so does an image URL in a 400.
+  const echoedName = JSON.stringify({ error: "Template not found: Payment plan" });
+  const echoedUrl = spring(400, "Bad Request").replace("}", ',"message":"Could not fetch https://example.com/upgrade-credits.png"}');
+  for (const client of [...NEUTRAL_CLIENTS, ...CLAUDE_CLIENTS]) {
+    assert.equal(describeApiError(404, echoedName, template("Payment plan"), undefined, client), NOT_AVAILABLE);
+    assert.equal(describeApiError(400, echoedUrl, undefined, undefined, client), NOT_AVAILABLE);
+  }
+});
+
+test("errors that are not about billing read the same for every client", () => {
+  for (const client of [...NEUTRAL_CLIENTS, ...CLAUDE_CLIENTS]) {
+    assert.equal(
+      describeApiError(403, JSON.stringify({ error: "You're not authorized to update this template" }), template("tpl-1"), undefined, client),
+      "The connected Templated account does not have access to template tpl-1 (HTTP 403). It may belong to another Templated account: call list_templates to see the templates this connection can use, or reconnect Templated with the account that owns it.",
+    );
+    assert.equal(
+      describeApiError(403, JSON.stringify({ error: "Your account is blocked. Please contact support." }), undefined, undefined, client),
+      "Templated refused this request (HTTP 403): Your account is blocked. Please contact support. Reconnect Templated with an account that has access, then retry.",
+    );
+    assert.equal(
+      describeApiError(404, spring(404, "Not Found"), template("tpl-9"), undefined, client),
+      "Template tpl-9 not found in the connected Templated account (HTTP 404). Call list_templates to get valid template IDs.",
+    );
+    assert.equal(
+      describeApiError(404, spring(404, "Not Found"), undefined, undefined, client),
+      "Not found (HTTP 404). Check the IDs used in this call.",
+    );
+  }
 });
 
 test("404 on a known resource names the ID and the list tool to call", () => {
@@ -140,6 +250,33 @@ test("apiRequest throws an ApiError that carries the HTTP status", async () => {
       () => apiRequest(ctx("k"), "GET", "/v1/template/missing"),
       (error: unknown) => error instanceof ApiError && error.status === 404 && /HTTP 404/.test(error.message),
     );
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("apiRequest words a plan-limit error for the client named in the context", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(API_TEMPLATE_LIMIT, { status: 403 })) as typeof fetch;
+  const errorFor = async (clientName?: string): Promise<ApiError> => {
+    try {
+      await apiRequest({ ...ctx("k"), clientName }, "POST", "/v1/template", { name: "Post" });
+    } catch (error) {
+      assert.ok(error instanceof ApiError);
+      return error;
+    }
+    assert.fail("expected the request to be refused");
+  };
+  try {
+    const openai = await errorFor("openai-mcp");
+    const claude = await errorFor("Anthropic/ClaudeAI");
+    assert.equal(openai.message, NOT_AVAILABLE);
+    assert.equal(claude.message, TEMPLATE_LIMIT_REACHED);
+    assert.equal((await errorFor("Cursor")).message, NOT_AVAILABLE);
+    assert.equal((await errorFor(undefined)).message, NOT_AVAILABLE, "a client that is not known is not told about the plan");
+    // handleToolCall re-describes the error with the item it was about: the client still decides the wording
+    assert.equal(openai.about(template("tpl-1")).message, NOT_AVAILABLE);
+    assert.equal(claude.about(template("tpl-1")).message, TEMPLATE_LIMIT_REACHED);
   } finally {
     globalThis.fetch = original;
   }

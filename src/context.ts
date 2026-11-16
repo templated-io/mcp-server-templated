@@ -2,6 +2,9 @@ export interface RequestContext {
   apiKey: string;
   folderId: string | null;
   externalId: string | null;
+  // Name the MCP client gave at initialize, or its user agent when the handshake is
+  // not known. The server sets it per tool call; plan-limit errors are worded by it.
+  clientName?: string;
 }
 
 export function contextFromEnv(env: NodeJS.ProcessEnv = process.env): RequestContext {
