@@ -31,6 +31,28 @@ const limitParam = {
   description: `Results per page (default: ${DEFAULT_LIMIT}, max: ${MAX_LIMIT})`,
 };
 
+// Text sizing fields of the REST API. A model can't measure text, so a fixed font_size
+// often wraps onto extra lines that spill over the layers around it; with these,
+// Templated sizes the text to its box.
+const textFitProperties = {
+  autofit: {
+    type: "string",
+    enum: ["height", "width"],
+    description:
+      "Lets Templated size the text of a text layer to its box, when the template is saved and again on each render with new text. " +
+      "'height': the largest size at which the wrapped text fits the box height. 'width': the largest size at which the longest line fits the box width. " +
+      "The fit is estimated from average character widths, so a box about 15% wider than the text needs keeps heavy or wide fonts on one line.",
+  },
+  max_font_size: {
+    type: "number",
+    description: "With autofit: the largest font size in pixels the text may get, which is the size the design intends when the text fits.",
+  },
+  min_font_size: {
+    type: "number",
+    description: "With autofit: the smallest font size in pixels the text may shrink to.",
+  },
+};
+
 // Layer properties accepted inside a page of the `pages` array. Unlike the
 // top-level `layers` array, a page's `layers` is an object keyed by layer name,
 // so there is no `layer` field here (the key is the name).
@@ -40,6 +62,7 @@ const pageLayerProperties = {
   width: { type: "number" }, height: { type: "number" },
   text: { type: "string" }, color: { type: "string" },
   font_family: { type: "string" }, font_size: { type: "string", description: "CSS size with unit, e.g. '48px'" },
+  ...textFitProperties,
   image_url: { type: "string" }, background: { type: "string" },
   html: { type: "string", description: "SVG content for shape layers" },
   hide: { type: "boolean" },
@@ -106,6 +129,7 @@ export const tools: Tool[] = [
           description:
             "Layer values keyed by layer name, e.g. { \"title\": { \"text\": \"Hello\" }, \"photo\": { \"image_url\": \"https://...\" } }. " +
             "Each value can set text, image_url, color, background, hide and other layer properties. " +
+            "When new text is longer than the template's, 'autofit' ('height' or 'width') with 'max_font_size' on that layer sizes it to the layer's box; a 'font_size' in the same layer turns autofit off. " +
             "'animation' (MP4 only) takes 'in' (entrance: type slide|fade|zoom|rotate, direction, duration, writingStyle), 'loop' (type spin|pulse, duration), " +
             "'out' (exit: type slide|fade|zoom, direction, duration), 'start' and 'end' (when the layer appears and disappears). All animation times are in milliseconds.",
           additionalProperties: {
@@ -383,6 +407,8 @@ export const tools: Tool[] = [
       "Create a new template in the connected Templated account from layers, for example a social media post, banner, OG image, certificate or invoice. " +
       "Use this when none of the existing templates fits or the account has no templates yet. " +
       "Each layer has a unique name in 'layer' and a 'type': text, image, shape or rating. Shape layers draw rectangles, circles and other shapes from SVG content in 'html'. " +
+      "Text wider than its box wraps onto extra lines, which can spill over the layers above and below: a line is roughly its character count x font size x 0.6 wide (0.7 for heavy weights, wide display fonts and capitals). " +
+      "Setting 'autofit' with 'max_font_size' on a text layer lets Templated size the text to the box, which suits headlines and text that changes per render. " +
       "For a multi-page or multi-size template (several sizes in one template), pass 'pages' in place of 'layers'. " +
       "Returns the new template; its ID can be rendered right away with create_render.",
     annotations: {
@@ -444,6 +470,7 @@ export const tools: Tool[] = [
               line_height: { type: "string", description: "Line height (e.g., '1.4', '24px')" },
               horizontal_align: { type: "string", enum: ["left", "center", "right"], description: "Horizontal text alignment" },
               vertical_align: { type: "string", enum: ["top", "center", "bottom"], description: "Vertical text alignment" },
+              ...textFitProperties,
               // Image layer properties
               image_url: { type: "string", description: "Image URL (for image layers)" },
               object_fit: { type: "string", enum: ["cover", "contain", "fill"], description: "How image fits in container" },
@@ -562,6 +589,7 @@ export const tools: Tool[] = [
               width: { type: "number" }, height: { type: "number" },
               text: { type: "string" }, color: { type: "string" },
               font_family: { type: "string" }, font_size: { type: "string" },
+              ...textFitProperties,
               image_url: { type: "string" }, background: { type: "string" },
               html: { type: "string", description: "SVG content for shape layers" },
               animation: {

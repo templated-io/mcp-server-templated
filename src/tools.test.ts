@@ -83,6 +83,26 @@ const pages = [
   { page: "Story", width: 1080, height: 1920, layers: { title: { type: "text", text: "B" } } },
 ];
 
+test("template tools declare the text autofit fields and forward them to the API", async () => {
+  const layerProps = (name: string) => (schemaOf(name).layers as any).items.properties;
+  const pageLayerProps = (name: string) => (schemaOf(name).pages as any).items.properties.layers.additionalProperties.properties;
+  for (const name of ["create_template", "update_template"]) {
+    for (const props of [layerProps(name), pageLayerProps(name)]) {
+      assert.deepEqual(props.autofit.enum, ["height", "width"], name);
+      assert.equal(props.max_font_size.type, "number", name);
+      assert.equal(props.min_font_size.type, "number", name);
+    }
+  }
+  assert.match(tools.find((t) => t.name === "create_template")!.description!, /autofit/);
+  assert.match((schemaOf("create_render").layers as any).description, /autofit/);
+
+  const layers = [{ layer: "title", type: "text", text: "20% OFF", x: 0, y: 0, width: 680, height: 230, autofit: "height", max_font_size: 190 }];
+  const calls = await captureCalls("create_template", { name: "t", width: 1080, height: 1080, layers });
+  const post = calls.find((c) => c.method === "POST" && c.url.endsWith("/v1/template"));
+  assert.ok(post, "expected POST /v1/template");
+  assert.deepEqual(post!.body.layers, layers);
+});
+
 test("create_template declares pages and forwards it to POST /v1/template", async () => {
   assert.ok(schemaOf("create_template").pages, "inputSchema must declare pages");
 
